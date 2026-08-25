@@ -73,9 +73,12 @@ export class SyncEngine {
             await this.executePlan(plan);
             
             this.state.setLastSyncTime(Math.floor(Date.now() / 1000));
-            await this.state.save();
-            
             const hasChanges = plan.uploads.size > 0 || plan.downloads.size > 0 || plan.deletionsLocal.size > 0 || plan.deletionsRemote.size > 0 || plan.conflicts.size > 0;
+            
+            if (hasChanges || fullScan) {
+                await this.state.save();
+            }
+            
             return hasChanges;
         } catch (e: any) {
             console.error('Sync Error', e);
