@@ -1,4 +1,4 @@
-# Obsidian community plugin
+# Obsidian Synology Sync Plugin
 
 ## Project overview
 
@@ -13,7 +13,7 @@
 - **Bundler: esbuild** (required for this sample - `esbuild.config.mjs` and build scripts depend on it). Alternative bundlers like Rollup or webpack are acceptable for other projects if they bundle all external dependencies into `main.js`.
 - Types: `obsidian` type definitions.
 
-**Note**: This sample project has specific technical dependencies on npm and esbuild. If you're creating a plugin from scratch, you can choose different tools, but you'll need to replace the build configuration accordingly.
+**Note**: This project has specific technical dependencies on npm and esbuild.
 
 ### Install
 
@@ -147,6 +147,7 @@ Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particula
 
 **Do**
 
+- **i18n check**: Every time there's a functional change involving UI text, Notice messages, or Commands, you MUST check and update the multi-language support (i18n) by modifying `src/locales/en.ts` and `src/locales/zh-cn.ts`.
 - Add commands with stable IDs (don't rename once released).
 - Provide defaults and validation in settings.
 - Write idempotent code paths so reload/unload doesn't leak listeners or intervals.
@@ -166,17 +167,17 @@ Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particula
 
 ```ts
 import { Plugin } from 'obsidian';
-import { MySettings, DEFAULT_SETTINGS } from './settings';
+import { SynologySyncSettings, DEFAULT_SETTINGS } from './settings';
 import { registerCommands } from './commands';
 
-export default class MyPlugin extends Plugin {
-	settings!: MySettings;
+export default class SynologySyncPlugin extends Plugin {
+	settings!: SynologySyncSettings;
 
 	async onload() {
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MySettings>,
+			(await this.loadData()) as Partial<SynologySyncSettings>,
 		);
 		registerCommands(this);
 	}
@@ -186,14 +187,14 @@ export default class MyPlugin extends Plugin {
 **settings.ts**:
 
 ```ts
-export interface MySettings {
-	enabled: boolean;
-	apiKey: string;
+export interface SynologySyncSettings {
+	nasUrl: string;
+	username: string;
 }
 
-export const DEFAULT_SETTINGS: MySettings = {
-	enabled: true,
-	apiKey: '',
+export const DEFAULT_SETTINGS: SynologySyncSettings = {
+	nasUrl: '',
+	username: '',
 };
 ```
 
@@ -225,11 +226,11 @@ this.addCommand({
 ### Persist settings
 
 ```ts
-interface MySettings { enabled: boolean }
-const DEFAULT_SETTINGS: MySettings = { enabled: true };
+interface SynologySyncSettings { nasUrl: string }
+const DEFAULT_SETTINGS: SynologySyncSettings = { nasUrl: '' };
 
 async onload() {
-  this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MySettings>);
+  this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<SynologySyncSettings>);
   await this.saveData(this.settings);
 }
 ```
