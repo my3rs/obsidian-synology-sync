@@ -72,6 +72,12 @@ export class SynologyClient {
 			} catch(e) {}
 			throw new Error(`HTTP ${res.status}: ${errorDetail}`);
 		}
+		
+		if (res.json && res.json.success === false) {
+			const code = res.json.error?.code || 'Unknown';
+			throw new Error(`API Error Code: ${code}`);
+		}
+		
 		return res;
 	}
 
@@ -181,6 +187,12 @@ export class SynologyClient {
 
 		const res = await requestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		
+		if (res.json && res.json.success === false) {
+			const code = res.json.error?.code || 'Unknown';
+			throw new Error(`API Error Code: ${code}`);
+		}
+		
 		return res.json;
 	}
 
@@ -212,6 +224,12 @@ export class SynologyClient {
 
 		const res = await requestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		
+		if (res.json && res.json.success === false) {
+			const code = res.json.error?.code || 'Unknown';
+			throw new Error(`API Error Code: ${code}`);
+		}
+		
 		return res.json;
 	}
 
@@ -230,7 +248,7 @@ export class SynologyClient {
 	 */
 	async deleteFile(path: string): Promise<any> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/delete';
-		const res = await this.request(endpoint, { files: [path], permanent: true }, 'POST', 'application/json');
+		const res = await this.request(endpoint, { files: [path], permanent: false }, 'POST', 'application/json');
 		return res.json;
 	}
 
