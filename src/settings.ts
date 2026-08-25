@@ -121,5 +121,45 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 						}
 					});
 			});
+
+		containerEl.createEl('h3', { text: '危险操作 (Danger Zone) / 首次初始化', cls: 'setting-item-heading' });
+		
+		new Setting(containerEl)
+			.setName('强制全量上传 (覆盖群晖)')
+			.setDesc('以本地为准。强制清空远端额外文件，并将本地所有笔记推送到群晖。')
+			.addButton((btn) => {
+				btn.setButtonText('Force Upload')
+				   .setWarning()
+				   .onClick(async () => {
+					   if (confirm('警告：这会使用本地文件完全覆盖并重置群晖上的同步目录，您确定要执行吗？')) {
+						   await this.plugin.doForceUpload();
+					   }
+				   });
+			});
+
+		new Setting(containerEl)
+			.setName('强制全量下载 (覆盖本地)')
+			.setDesc('以群晖为准。强制清空本地额外文件，并将群晖所有笔记拉取到本地。')
+			.addButton((btn) => {
+				btn.setButtonText('Force Download')
+				   .setWarning()
+				   .onClick(async () => {
+					   if (confirm('警告：这会清空本地额外文件，并使用群晖文件完全覆盖本地库，您确定要执行吗？')) {
+						   await this.plugin.doForceDownload();
+					   }
+				   });
+			});
+
+		new Setting(containerEl)
+			.setName('构建同步基准 (重建状态)')
+			.setDesc('适合已通过U盘手动拷贝的场景。清空现有同步状态，重新比对Hash并生成新的同步基准。')
+			.addButton((btn) => {
+				btn.setButtonText('Rebuild State')
+				   .onClick(async () => {
+					   if (confirm('确认要强制重建同步状态快照吗？')) {
+						   await this.plugin.doRebuildSyncState();
+					   }
+				   });
+			});
 	}
 }
