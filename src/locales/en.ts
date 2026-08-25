@@ -74,6 +74,8 @@ export default {
 
 	// engine.ts
 	'notice.engine.syncing': 'Syncing...',
+	'notice.engine.syncSuccess': 'Sync completed successfully',
+	'notice.engine.syncUpToDate': 'Already up to date',
 
 	// ui/sync-log-modal.ts
 	'ui.logModal.title': 'Synology Sync Log',

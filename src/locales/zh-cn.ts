@@ -74,6 +74,8 @@ export default {
 
 	// engine.ts
 	'notice.engine.syncing': '正在同步...',
+	'notice.engine.syncSuccess': '同步成功',
+	'notice.engine.syncUpToDate': '已是最新，无需同步',
 
 	// ui/sync-log-modal.ts
 	'ui.logModal.title': 'Synology Sync 同步日志',

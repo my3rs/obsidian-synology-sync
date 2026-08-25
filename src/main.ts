@@ -48,9 +48,8 @@ export default class SynologySyncPlugin extends Plugin {
 					const client = new SynologyClient(nasUrl, username, password);
 					(client as any).sid = sid; // 注入现有的 sid
 
-					// 读取文件内容为二进制并转为 Base64
+					// 读取文件内容为二进制
 					const buffer = await this.app.vault.readBinary(activeFile);
-					const base64Content = arrayBufferToBase64(buffer);
 
 					let targetPath = `${syncFolder}/${activeFile.path}`;
 					if (!targetPath.startsWith('/mydrive/') && !targetPath.startsWith('/team-folders/')) {
@@ -61,7 +60,7 @@ export default class SynologySyncPlugin extends Plugin {
 
 					const n = new Notice(t('notice.uploading', { targetPath }), 0);
 					notice = n;
-					await client.uploadFileBase64(targetPath, base64Content);
+					await client.uploadFile(targetPath, buffer);
 					n.setMessage(t('notice.uploadSuccess'));
 					setTimeout(() => n.hide(), 3000);
 				} catch (err: any) {

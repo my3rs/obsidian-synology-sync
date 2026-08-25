@@ -62,9 +62,12 @@ export class SyncEngine {
      */
     async runSync(fullScan: boolean = false): Promise<boolean> {
         if (this.isSyncing) return false;
+        
+        let notice: Notice | null = null;
         try {
             this.isSyncing = true;
-            new Notice(t('notice.engine.syncing'));
+            notice = new Notice(t('notice.engine.syncing'), 0); // 0 means it won't auto-hide
+            
             await this.state.load();
             await this.detectLocalChanges();
             await this.detectRemoteChanges(fullScan ? 0 : this.state.getLastSyncTime());
@@ -79,9 +82,18 @@ export class SyncEngine {
                 await this.state.save();
             }
             
+            if (notice) {
+                notice.setMessage(hasChanges ? t('notice.engine.syncSuccess') : t('notice.engine.syncUpToDate'));
+                setTimeout(() => notice?.hide(), 3000);
+            }
+            
             return hasChanges;
         } catch (e: any) {
             console.error('Sync Error', e);
+            if (notice) {
+                notice.setMessage(t('notice.syncException', { error: e.message }));
+                setTimeout(() => notice?.hide(), 5000);
+            }
             throw e;
         } finally {
             this.isSyncing = false;
@@ -340,21 +352,25 @@ export class SyncEngine {
         for (const path of uploads) {
             const file = this.app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
-                const buffer = await this.app.vault.readBinary(file);
-                const base64 = arrayBufferToBase64(buffer);
-                const uploadRes = await this.client.uploadFileBase64(this.toRemotePath(path), base64);
-                
-                const remoteMeta = await this.client.getMetadata(this.toRemotePath(path));
-                const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
-                if (!rHash) console.warn(`Failed to get Hash from remote, path: ${path}`, remoteMeta);
+                try {
+                    const buffer = await this.app.vault.readBinary(file);
+                    const uploadRes = await this.client.uploadFile(this.toRemotePath(path), buffer);
+                    
+                    const remoteMeta = await this.client.getMetadata(this.toRemotePath(path));
+                    const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
+                    if (!rHash) console.warn(`Failed to get Hash from remote, path: ${path}`, remoteMeta);
 
-                this.state.updateFileState(path, {
-                    local_mtime: file.stat.mtime,
-                    local_hash: this.localChanges.get(path)!.hash,
-                    remote_hash: rHash
-                });
-                await this.state.save();
-                await this.logger.addLog({ action: 'Upload', file: path });
+                    this.state.updateFileState(path, {
+                        local_mtime: file.stat.mtime,
+                        local_hash: this.localChanges.get(path)!.hash,
+                        remote_hash: rHash
+                    });
+                    await this.state.save();
+                    await this.logger.addLog({ action: 'Upload', file: path });
+                } catch (e: any) {
+                    console.error(`[SynologySync] Error uploading file ${path}:`, e);
+                    await this.logger.addLog({ action: 'Error', file: path, details: e.message });
+                }
             }
         }
 
@@ -404,22 +420,26 @@ export class SyncEngine {
             
             const file = this.app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
-                const localBuffer = await this.app.vault.readBinary(file);
-                const base64 = arrayBufferToBase64(localBuffer);
-                const uploadRes = await this.client.uploadFileBase64(this.toRemotePath(path), base64);
-                
-                const remoteMeta = await this.client.getMetadata(this.toRemotePath(path));
-                const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
-                if (!rHash) console.warn(`Failed to get Hash from remote, conflict path: ${path}`, remoteMeta);
+                try {
+                    const localBuffer = await this.app.vault.readBinary(file);
+                    const uploadRes = await this.client.uploadFile(this.toRemotePath(path), localBuffer);
+                    
+                    const remoteMeta = await this.client.getMetadata(this.toRemotePath(path));
+                    const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
+                    if (!rHash) console.warn(`Failed to get Hash from remote, conflict path: ${path}`, remoteMeta);
 
-                const localHash = await calculateSHA256(localBuffer);
-                this.state.updateFileState(path, {
-                    local_mtime: file.stat.mtime,
-                    local_hash: localHash,
-                    remote_hash: rHash
-                });
-                await this.state.save();
-                await this.logger.addLog({ action: 'Conflict', file: path, details: `Keep local, save copy as ${conflictPath}` });
+                    const localHash = await calculateSHA256(localBuffer);
+                    this.state.updateFileState(path, {
+                        local_mtime: file.stat.mtime,
+                        local_hash: localHash,
+                        remote_hash: rHash
+                    });
+                    await this.state.save();
+                    await this.logger.addLog({ action: 'Conflict', file: path, details: `Keep local, save copy as ${conflictPath}` });
+                } catch (e: any) {
+                    console.error(`[SynologySync] Error uploading conflict file ${path}:`, e);
+                    await this.logger.addLog({ action: 'Error', file: path, details: e.message });
+                }
             }
         }
         
@@ -428,12 +448,12 @@ export class SyncEngine {
         if (hasChanges) {
             await this.logger.flush();
             try {
-                const b64 = await this.logger.getLogContentBase64();
-                if (b64) {
-                    await this.client.uploadFileBase64(this.toRemotePath('.sync_history.json'), b64);
+                const buffer = await this.logger.getLogContentBuffer();
+                if (buffer) {
+                    await this.client.uploadFile(this.toRemotePath('.sync_history.json'), buffer);
                 }
             } catch (e: any) {
-                console.error('Failed to upload log', e);
+                console.warn("Failed to upload .sync_history.json", e);
             }
         }
     }
