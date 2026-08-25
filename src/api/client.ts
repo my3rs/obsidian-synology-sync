@@ -31,15 +31,14 @@ export class SynologyClient {
 			method,
 			headers: {
 				'Accept': 'application/json',
-			}
+			},
+			throw: false // 不要让 Obsidian 在 4xx 报错时阻断我们读取 body
 		};
 
-		// 如果已有 sid，将其放入 Header 或者 Query，目前 API 文档中后续调用的鉴权方式通常是在 header 里带 authorization 或是 cookie，
-		// 但由于有些是直接放入 body 或者 query，这里为了通用，我们先保留一个扩展点。
-		// 如果后续文档表明 sid 在 query 里，我们在 GET 里追加，如果是在 header，我们在 header 里追加。
+		// 既加 Cookie，也加 URL 参数，双保险，防止部分客户端屏蔽 Cookie Header
 		if (this.sid) {
-			// 具体取决于后续 API 文档，暂定放到 Authorization Header
-			req.headers!['Authorization'] = `Bearer ${this.sid}`;
+			req.headers!['Cookie'] = `id=${this.sid};`;
+			url.searchParams.append('_sid', this.sid);
 		}
 
 		if (method === 'GET') {
@@ -48,6 +47,7 @@ export class SynologyClient {
 			});
 			req.url = url.toString();
 		} else {
+			req.url = url.toString(); // 保存可能追加了 _sid 的 URL
 			req.headers!['Content-Type'] = contentType;
 			if (contentType === 'application/json') {
 				req.body = JSON.stringify(params);
@@ -60,7 +60,19 @@ export class SynologyClient {
 			}
 		}
 
-		return await requestUrl(req);
+		const res = await requestUrl(req);
+		if (res.status >= 400) {
+			let errorDetail = '';
+			try {
+				if (res.json && res.json.error) {
+					errorDetail = `API Error Code: ${res.json.error.code}`;
+				} else {
+					errorDetail = res.text;
+				}
+			} catch(e) {}
+			throw new Error(`HTTP ${res.status}: ${errorDetail}`);
+		}
+		return res;
 	}
 
 	/**
@@ -106,5 +118,155 @@ export class SynologyClient {
 	async testConnection(): Promise<boolean> {
 		const sid = await this.login();
 		return !!sid;
+	}
+
+	/**
+	 * 获取文件或目录的元数据
+	 */
+	async getMetadata(path: string): Promise<any> {
+		const endpoint = '/api/SynologyDrive/default/v2/files';
+		const params = { path };
+		const res = await this.request(endpoint, params, 'GET');
+		return res.json;
+	}
+
+	/**
+	 * 列出目录下的文件和文件夹
+	 */
+	async listFiles(path: string): Promise<any> {
+		const endpoint = '/api/SynologyDrive/default/v2/files/list';
+		const url = new URL(this.baseUrl + endpoint);
+		url.searchParams.append('path', path);
+		if (this.sid) url.searchParams.append('_sid', this.sid);
+
+		let req: RequestUrlParam = {
+			url: url.toString(),
+			method: 'POST',
+			headers: {
+				'Accept': 'application/json',
+				'Content-Type': 'application/json'
+			},
+			throw: false
+		};
+		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
+		req.body = "{}"; // 没有额外的 body
+
+		const res = await requestUrl(req);
+		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		return res.json;
+	}
+
+	/**
+	 * 创建文件夹
+	 */
+	async createFolder(path: string): Promise<any> {
+		const endpoint = '/api/SynologyDrive/default/v2/files';
+		const url = new URL(this.baseUrl + endpoint);
+		url.searchParams.append('type', 'folder');
+		url.searchParams.append('path', path);
+		url.searchParams.append('conflict_action', 'overwrite'); // 避免同名目录报错
+		if (this.sid) url.searchParams.append('_sid', this.sid);
+
+		let req: RequestUrlParam = {
+			url: url.toString(),
+			method: 'POST',
+			headers: {
+				'Accept': 'application/json',
+				'Content-Type': 'application/json'
+			},
+			throw: false
+		};
+		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
+		req.body = "{}"; // 创建文件夹不需要 body
+
+		const res = await requestUrl(req);
+		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		return res.json;
+	}
+
+	/**
+	 * 创建或覆盖文件 (对于小文件 < 1MB 使用此接口最稳定，适合笔记同步)
+	 */
+	async uploadFileBase64(path: string, base64Content: string): Promise<any> {
+		const endpoint = '/api/SynologyDrive/default/v2/files';
+		const url = new URL(this.baseUrl + endpoint);
+		url.searchParams.append('type', 'file');
+		url.searchParams.append('path', path);
+		url.searchParams.append('conflict_action', 'overwrite');
+		if (this.sid) url.searchParams.append('_sid', this.sid);
+
+		let req: RequestUrlParam = {
+			url: url.toString(),
+			method: 'POST',
+			headers: {
+				'Accept': 'application/json',
+				'Content-Type': 'application/json'
+			},
+			throw: false
+		};
+		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
+		
+		req.body = JSON.stringify({
+			file_content: base64Content
+		});
+
+		const res = await requestUrl(req);
+		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		return res.json;
+	}
+
+	/**
+	 * 下载文件
+	 * 单个文件下载返回的应该是文件的 buffer (Content-Type 为对应的 mime)
+	 */
+	async downloadFile(path: string): Promise<ArrayBuffer> {
+		const endpoint = '/api/SynologyDrive/default/v2/files/download';
+		const res = await this.request(endpoint, { files: [path] }, 'POST', 'application/json');
+		return res.arrayBuffer;
+	}
+
+	/**
+	 * 删除文件或目录
+	 */
+	async deleteFile(path: string): Promise<any> {
+		const endpoint = '/api/SynologyDrive/default/v2/files/delete';
+		const res = await this.request(endpoint, { files: [path], permanent: true }, 'POST', 'application/json');
+		return res.json;
+	}
+
+	/**
+	 * 搜索自 start_date (Unix 时间戳，秒) 以来被修改过的文件或文件夹
+	 */
+	async search(location: string, fileType: 'file' | 'folder', startDateUnix?: number): Promise<any> {
+		const endpoint = '/api/SynologyDrive/default/v2/files/search';
+		const url = new URL(this.baseUrl + endpoint);
+		if (this.sid) url.searchParams.append('_sid', this.sid);
+
+		let req: RequestUrlParam = {
+			url: url.toString(),
+			method: 'POST',
+			headers: {
+				'Accept': 'application/json',
+				'Content-Type': 'application/json'
+			},
+			throw: false
+		};
+		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
+		
+		const body: any = {
+			location: location,
+			file_type: fileType,
+			limit: 5000 // 调高单页上限，若不够后续可结合 offset 分页
+		};
+		if (startDateUnix) {
+			body.start_date = startDateUnix;
+			body.time = 'modified_time';
+		}
+		
+		req.body = JSON.stringify(body);
+
+		const res = await requestUrl(req);
+		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		return res.json;
 	}
 }
