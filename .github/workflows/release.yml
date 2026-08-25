@@ -1,9 +1,10 @@
 name: Release Obsidian plugin
 
 on:
-    push:
-        tags:
-            - '*'
+    workflow_dispatch:
+#    push:
+#        tags:
+#            - '*'
 
 jobs:
     build:
