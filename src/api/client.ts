@@ -197,9 +197,28 @@ export class SynologyClient {
 	}
 
 	/**
+	 * 递归确保远程目录存在
+	 */
+	async ensureRemoteFolder(path: string): Promise<void> {
+		const parts = path.split('/').filter(p => p);
+		let current = '';
+		for (let i = 0; i < parts.length; i++) {
+			current += '/' + parts[i];
+			if (current === '/mydrive' || current === '/team-folders' || (parts[0] === 'team-folders' && i === 1)) {
+				continue;
+			}
+			try {
+				await this.createFolder(current);
+			} catch (e: any) {
+				// Ignore errors, if it truly fails, the subsequent upload will fail anyway
+			}
+		}
+	}
+
+	/**
 	 * 创建或覆盖文件 (对于小文件 < 1MB 使用此接口最稳定，适合笔记同步)
 	 */
-	async uploadFileBase64(path: string, base64Content: string): Promise<any> {
+	async uploadFileBase64(path: string, base64Content: string, isRetry: boolean = false): Promise<any> {
 		const endpoint = '/api/SynologyDrive/default/v2/files';
 		const url = new URL(this.baseUrl + endpoint);
 		url.searchParams.append('type', 'file');
@@ -226,8 +245,15 @@ export class SynologyClient {
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		
 		if (res.json && res.json.success === false) {
-			const code = res.json.error?.code || 'Unknown';
-			throw new Error(`API Error Code: ${code}`);
+			const code = res.json.error?.code;
+			if (code === 1000 && !isRetry) {
+				const parentPath = path.substring(0, path.lastIndexOf('/'));
+				if (parentPath && parentPath !== '/mydrive' && parentPath !== '') {
+					await this.ensureRemoteFolder(parentPath);
+					return this.uploadFileBase64(path, base64Content, true);
+				}
+			}
+			throw new Error(`API Error Code: ${code || 'Unknown'}`);
 		}
 		
 		return res.json;
