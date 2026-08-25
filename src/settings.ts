@@ -1,6 +1,7 @@
 import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 import SynologySyncPlugin from './main';
 import { SynologyClient } from './api/client';
+import { t } from './locales';
 
 export interface SynologySyncSettings {
 	nasUrl: string;
@@ -34,8 +35,8 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('NAS Address (URL)')
-			.setDesc('例如: https://nas.example.com:5001')
+			.setName(t('settings.nasUrl.name'))
+			.setDesc(t('settings.nasUrl.desc'))
 			.addText((text) =>
 				text
 					.setPlaceholder('https://...')
@@ -47,8 +48,8 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Username')
-			.setDesc('群晖账号用户名')
+			.setName(t('settings.username.name'))
+			.setDesc(t('settings.username.desc'))
 			.addText((text) =>
 				text
 					.setPlaceholder('admin')
@@ -60,8 +61,8 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Password')
-			.setDesc('群晖账号密码')
+			.setName(t('settings.password.name'))
+			.setDesc(t('settings.password.desc'))
 			.addText((text) => {
 				text.inputEl.type = 'password';
 				text.setPlaceholder('password')
@@ -73,8 +74,8 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName('2FA 验证码 (OTP)')
-			.setDesc('验证成功后会自动清空。仅当 Session 过期或首次登录时需要。')
+			.setName(t('settings.otp.name'))
+			.setDesc(t('settings.otp.desc'))
 			.addText((text) =>
 				text
 					.setPlaceholder('123456')
@@ -86,8 +87,8 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Sync Folder')
-			.setDesc('群晖上的同步目标文件夹，必须存在 (例如: /home/Drive/ObsidianSync)')
+			.setName(t('settings.syncFolder.name'))
+			.setDesc(t('settings.syncFolder.desc'))
 			.addText((text) =>
 				text
 					.setPlaceholder('/ObsidianSync')
@@ -99,11 +100,11 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Test Connection & Login')
-			.setDesc(this.plugin.settings.sid ? '当前已有授权会话 (SID)' : '当前未授权，请点击登录获取会话')
+			.setName(t('settings.testConn.name'))
+			.setDesc(this.plugin.settings.sid ? t('settings.testConn.desc.hasSid') : t('settings.testConn.desc.noSid'))
 			.addButton((btn) => {
 				btn
-					.setButtonText(this.plugin.settings.sid ? '重新登录' : '测试连接')
+					.setButtonText(this.plugin.settings.sid ? t('settings.testConn.btn.relogin') : t('settings.testConn.btn.test'))
 					.setCta()
 					.onClick(async () => {
 						const { nasUrl, username, password, otpCode } = this.plugin.settings;
@@ -114,49 +115,49 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 							this.plugin.settings.sid = sid;
 							this.plugin.settings.otpCode = ''; // 登录成功后清空一次性验证码
 							await this.plugin.saveSettings();
-							new Notice('连接并登录成功');
+							new Notice(t('notice.connSuccess'));
 							this.display(); // 刷新 UI
 						} catch (err: any) {
-							new Notice('连接失败: ' + err.message);
+							new Notice(t('notice.connFailed', { error: err.message }));
 						}
 					});
 			});
 
-		containerEl.createEl('h3', { text: '危险操作 (Danger Zone) / 首次初始化', cls: 'setting-item-heading' });
+		containerEl.createEl('h3', { text: t('settings.dangerZone'), cls: 'setting-item-heading' });
 		
 		new Setting(containerEl)
-			.setName('强制全量上传 (覆盖群晖)')
-			.setDesc('以本地为准。强制清空远端额外文件，并将本地所有笔记推送到群晖。')
+			.setName(t('settings.forceUpload.name'))
+			.setDesc(t('settings.forceUpload.desc'))
 			.addButton((btn) => {
-				btn.setButtonText('Force Upload')
+				btn.setButtonText(t('settings.forceUpload.btn'))
 				   .setWarning()
 				   .onClick(async () => {
-					   if (confirm('警告：这会使用本地文件完全覆盖并重置群晖上的同步目录，您确定要执行吗？')) {
+					   if (confirm(t('settings.forceUpload.confirm'))) {
 						   await this.plugin.doForceUpload();
 					   }
 				   });
 			});
 
 		new Setting(containerEl)
-			.setName('强制全量下载 (覆盖本地)')
-			.setDesc('以群晖为准。强制清空本地额外文件，并将群晖所有笔记拉取到本地。')
+			.setName(t('settings.forceDownload.name'))
+			.setDesc(t('settings.forceDownload.desc'))
 			.addButton((btn) => {
-				btn.setButtonText('Force Download')
+				btn.setButtonText(t('settings.forceDownload.btn'))
 				   .setWarning()
 				   .onClick(async () => {
-					   if (confirm('警告：这会清空本地额外文件，并使用群晖文件完全覆盖本地库，您确定要执行吗？')) {
+					   if (confirm(t('settings.forceDownload.confirm'))) {
 						   await this.plugin.doForceDownload();
 					   }
 				   });
 			});
 
 		new Setting(containerEl)
-			.setName('构建同步基准 (重建状态)')
-			.setDesc('适合已通过U盘手动拷贝的场景。清空现有同步状态，重新比对Hash并生成新的同步基准。')
+			.setName(t('settings.rebuild.name'))
+			.setDesc(t('settings.rebuild.desc'))
 			.addButton((btn) => {
-				btn.setButtonText('Rebuild State')
+				btn.setButtonText(t('settings.rebuild.btn'))
 				   .onClick(async () => {
-					   if (confirm('确认要强制重建同步状态快照吗？')) {
+					   if (confirm(t('settings.rebuild.confirm'))) {
 						   await this.plugin.doRebuildSyncState();
 					   }
 				   });

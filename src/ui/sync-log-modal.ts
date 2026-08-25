@@ -1,5 +1,6 @@
 import { App, Modal, Setting } from 'obsidian';
 import { SyncLogger, LogEntry } from '../sync/logger';
+import { t } from '../locales';
 
 export class SyncLogModal extends Modal {
     private logger: SyncLogger;
@@ -13,11 +14,11 @@ export class SyncLogModal extends Modal {
         const { contentEl } = this;
         contentEl.empty();
         
-        contentEl.createEl('h2', { text: 'Synology Sync 同步日志' });
+        contentEl.createEl('h2', { text: t('ui.logModal.title') });
 
         const logs = await this.logger.getLogs();
         if (logs.length === 0) {
-            contentEl.createEl('p', { text: '暂无同步记录。' });
+            contentEl.createEl('p', { text: t('ui.logModal.empty') });
             return;
         }
 

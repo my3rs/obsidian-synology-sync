@@ -16,9 +16,9 @@ export class SyncState {
     private data: SyncDataRoot = { lastSyncTime: 0, files: {} };
     private path: string;
 
-    constructor(app: App) {
+    constructor(app: App, pluginDir: string) {
         this.app = app;
-        this.path = this.app.vault.configDir + '/plugins/obsidian-synology-sync/sync_data.json';
+        this.path = `${pluginDir}/sync_data.json`.replace(/\/\//g, '/');
     }
 
     async load() {

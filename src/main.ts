@@ -4,6 +4,7 @@ import {
 	SynologySyncSettings,
 	SynologySyncSettingTab,
 } from './settings';
+import { t } from './locales';
 
 import type { SyncLogger } from './sync/logger';
 
@@ -27,19 +28,20 @@ export default class SynologySyncPlugin extends Plugin {
 		// 测试命令：将当前打开的文件上传到群晖
 		this.addCommand({
 			id: 'synology-sync-upload-active',
-			name: 'Upload active file to Synology',
+			name: t('command.uploadActive'),
 			callback: async () => {
 				const activeFile = this.app.workspace.getActiveFile();
 				if (!activeFile) {
-					new Notice('No active file');
+					new Notice(t('notice.noActiveFile'));
 					return;
 				}
 
+				let notice: Notice | null = null;
 				try {
 					const { SynologyClient } = await import('./api/client');
 					const { nasUrl, username, password, sid, syncFolder } = this.settings;
 					if (!sid) {
-						new Notice('请先在设置中登录 Synology Drive');
+						new Notice(t('notice.loginRequired'));
 						return;
 					}
 
@@ -57,12 +59,19 @@ export default class SynologySyncPlugin extends Plugin {
 					// 移除可能存在的双斜杠
 					targetPath = targetPath.replace(/\/\//g, '/');
 
-					new Notice(`正在上传到: ${targetPath}`);
-
+					const n = new Notice(t('notice.uploading', { targetPath }), 0);
+					notice = n;
 					await client.uploadFileBase64(targetPath, base64Content);
-					new Notice('上传成功!');
+					n.setMessage(t('notice.uploadSuccess'));
+					setTimeout(() => n.hide(), 3000);
 				} catch (err: any) {
-					new Notice('上传失败: ' + err.message);
+					const n = notice;
+					if (n) {
+						n.setMessage(t('notice.uploadFailed', { error: err.message }));
+						setTimeout(() => n.hide(), 5000);
+					} else {
+						new Notice(t('notice.uploadFailed', { error: err.message }));
+					}
 					console.error(err);
 				}
 			}
@@ -71,20 +80,21 @@ export default class SynologySyncPlugin extends Plugin {
 		// 测试命令：从群晖下载当前路径的文件并覆盖本地
 		this.addCommand({
 			id: 'synology-sync-download-active',
-			name: 'Download active file from Synology',
+			name: t('command.downloadActive'),
 			callback: async () => {
 				const activeFile = this.app.workspace.getActiveFile();
 				if (!activeFile) {
-					new Notice('No active file to define path');
+					new Notice(t('notice.noActiveFileToDefine'));
 					return;
 				}
 
+				let notice: Notice | null = null;
 				try {
 					const { SynologyClient } = await import('./api/client');
 					const { LocalFS } = await import('./fs/local');
 					const { nasUrl, username, password, sid, syncFolder } = this.settings;
 					if (!sid) {
-						new Notice('请先在设置中登录 Synology Drive');
+						new Notice(t('notice.loginRequired'));
 						return;
 					}
 
@@ -97,15 +107,22 @@ export default class SynologySyncPlugin extends Plugin {
 					}
 					targetPath = targetPath.replace(/\/\//g, '/');
 
-					new Notice(`正在从群晖下载: ${targetPath}`);
-
+					const n = new Notice(t('notice.downloading', { targetPath }), 0);
+					notice = n;
 					const buffer = await client.downloadFile(targetPath);
 					const localFs = new LocalFS(this.app);
 					await localFs.write(activeFile.path, buffer);
 					
-					new Notice('下载并覆盖成功!');
+					n.setMessage(t('notice.downloadSuccess'));
+					setTimeout(() => n.hide(), 3000);
 				} catch (err: any) {
-					new Notice('下载失败: ' + err.message);
+					const n = notice;
+					if (n) {
+						n.setMessage(t('notice.downloadFailed', { error: err.message }));
+						setTimeout(() => n.hide(), 5000);
+					} else {
+						new Notice(t('notice.downloadFailed', { error: err.message }));
+					}
 					console.error(err);
 				}
 			}
@@ -113,7 +130,7 @@ export default class SynologySyncPlugin extends Plugin {
 
 		// 添加状态栏提示
 		this.statusBarItem = this.addStatusBarItem();
-		this.statusBarItem.setText('NAS: 待命');
+		this.statusBarItem.setText(t('status.standby'));
 		this.statusBarItem.onClickEvent(() => {
 			this.runEngineSync(false);
 		});
@@ -139,7 +156,7 @@ export default class SynologySyncPlugin extends Plugin {
 		// 同步引擎命令
 		this.addCommand({
 			id: 'synology-sync-run',
-			name: 'Run Synology Sync (Quick)',
+			name: t('command.runQuick'),
 			callback: async () => {
 				await this.runEngineSync(false);
 			}
@@ -147,7 +164,7 @@ export default class SynologySyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'synology-sync-run-full',
-			name: 'Run Synology Sync (Full)',
+			name: t('command.runFull'),
 			callback: async () => {
 				await this.runEngineSync(true);
 			}
@@ -155,7 +172,7 @@ export default class SynologySyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'synology-sync-show-log',
-			name: 'Show Synology Sync Log',
+			name: t('command.showLog'),
 			callback: async () => {
 				const { SyncLogModal } = await import('./ui/sync-log-modal');
 				new SyncLogModal(this.app, this.logger).open();
@@ -180,7 +197,7 @@ export default class SynologySyncPlugin extends Plugin {
 	private async getEngine() {
 		const { nasUrl, username, password, otpCode, sid, syncFolder } = this.settings;
 		if (!sid || !syncFolder) {
-			throw new Error('未配置 NAS 参数或未登录');
+			throw new Error(t('notice.nasParamsMissing'));
 		}
 
 		const { SynologyClient } = await import('./api/client');
@@ -190,7 +207,7 @@ export default class SynologySyncPlugin extends Plugin {
 		const client = new SynologyClient(nasUrl, username, password, otpCode);
 		(client as any).sid = sid;
 
-		const state = new SyncState(this.app);
+		const state = new SyncState(this.app, this.manifest.dir!);
 		return new SyncEngine(this.app, client, state, this.logger, syncFolder);
 	}
 
@@ -199,14 +216,14 @@ export default class SynologySyncPlugin extends Plugin {
 		
 		try {
 			this.isSyncing = true;
-			this.statusBarItem.setText('NAS: 同步中...');
+			this.statusBarItem.setText(t('status.syncing'));
 			
 			const engine = await this.getEngine();
 			const hasChanges = await engine.runSync(fullScan);
 			
 			if (hasChanges) {
 				this.lastSyncSuccessTime = Date.now();
-				this.statusBarItem.setText('NAS: 已同步');
+				this.statusBarItem.setText(t('status.synced'));
 				// 3秒后恢复待命状态
 				setTimeout(() => {
 					if (!this.isSyncing) this.updateStatusBarIdle();
@@ -215,8 +232,8 @@ export default class SynologySyncPlugin extends Plugin {
 				this.updateStatusBarIdle();
 			}
 		} catch (err: any) {
-			this.statusBarItem.setText('NAS: 错误');
-			new Notice('同步异常: ' + err.message);
+			this.statusBarItem.setText(t('status.error'));
+			new Notice(t('notice.syncException', { error: err.message }));
 			console.error(err);
 		} finally {
 			this.isSyncing = false;
@@ -227,9 +244,9 @@ export default class SynologySyncPlugin extends Plugin {
 		if (this.lastSyncSuccessTime) {
 			const date = new Date(this.lastSyncSuccessTime);
 			const timeStr = date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
-			this.statusBarItem.setText(`NAS: 待命 (${timeStr})`);
+			this.statusBarItem.setText(t('status.standbyWithTime', { time: timeStr }));
 		} else {
-			this.statusBarItem.setText('NAS: 待命');
+			this.statusBarItem.setText(t('status.standby'));
 		}
 	}
 
@@ -241,13 +258,13 @@ export default class SynologySyncPlugin extends Plugin {
 		if (this.isSyncing) return;
 		try {
 			this.isSyncing = true;
-			this.statusBarItem.setText('NAS: 强制上传中...');
+			this.statusBarItem.setText(t('status.forceUploading'));
 			const engine = await this.getEngine();
 			await engine.forceUpload();
 			this.lastSyncSuccessTime = Date.now();
-			new Notice('强制全量上传完成');
+			new Notice(t('notice.forceUploadSuccess'));
 		} catch (e: any) {
-			new Notice('强制上传失败: ' + e.message);
+			new Notice(t('notice.forceUploadFailed', { error: e.message }));
 		} finally {
 			this.isSyncing = false;
 			this.updateStatusBarIdle();
@@ -258,13 +275,13 @@ export default class SynologySyncPlugin extends Plugin {
 		if (this.isSyncing) return;
 		try {
 			this.isSyncing = true;
-			this.statusBarItem.setText('NAS: 强制下载中...');
+			this.statusBarItem.setText(t('status.forceDownloading'));
 			const engine = await this.getEngine();
 			await engine.forceDownload();
 			this.lastSyncSuccessTime = Date.now();
-			new Notice('强制全量下载完成');
+			new Notice(t('notice.forceDownloadSuccess'));
 		} catch (e: any) {
-			new Notice('强制下载失败: ' + e.message);
+			new Notice(t('notice.forceDownloadFailed', { error: e.message }));
 		} finally {
 			this.isSyncing = false;
 			this.updateStatusBarIdle();
@@ -275,13 +292,13 @@ export default class SynologySyncPlugin extends Plugin {
 		if (this.isSyncing) return;
 		try {
 			this.isSyncing = true;
-			this.statusBarItem.setText('NAS: 构建基准中...');
+			this.statusBarItem.setText(t('status.rebuilding'));
 			const engine = await this.getEngine();
 			await engine.rebuildSyncState();
 			this.lastSyncSuccessTime = Date.now();
-			new Notice('同步基准构建完成');
+			new Notice(t('notice.rebuildSuccess'));
 		} catch (e: any) {
-			new Notice('构建基准失败: ' + e.message);
+			new Notice(t('notice.rebuildFailed', { error: e.message }));
 		} finally {
 			this.isSyncing = false;
 			this.updateStatusBarIdle();

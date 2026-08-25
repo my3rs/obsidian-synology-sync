@@ -4,6 +4,7 @@ import { SyncState, FileSyncState } from './state';
 import { calculateSHA256 } from './utils';
 import { LocalFS } from '../fs/local';
 import { SyncLogger } from './logger';
+import { t } from '../locales';
 
 export interface SyncPlan {
     uploads: Set<string>;
@@ -63,7 +64,7 @@ export class SyncEngine {
         if (this.isSyncing) return false;
         try {
             this.isSyncing = true;
-            new Notice('正在同步...');
+            new Notice(t('notice.engine.syncing'));
             await this.state.load();
             await this.detectLocalChanges();
             await this.detectRemoteChanges(fullScan ? 0 : this.state.getLastSyncTime());
@@ -241,7 +242,7 @@ export class SyncEngine {
             // 如果根目录不存在 (刚安装)，listFiles 会报错 404
             // 我们可以在第一次捕获并静默，让后续逻辑去创建
             if (remotePath === this.remoteFolder) {
-                console.warn("远程根目录不存在，将自动创建", e.message);
+                console.warn("Remote root directory does not exist, will create automatically", e.message);
                 try { await this.client.createFolder(this.remoteFolder); } catch (e) {}
             } else {
                 throw e;
@@ -342,7 +343,7 @@ export class SyncEngine {
                 
                 const remoteMeta = await this.client.getMetadata(this.toRemotePath(path));
                 const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
-                if (!rHash) console.warn(`无法从远端获取 Hash，路径: ${path}`, remoteMeta);
+                if (!rHash) console.warn(`Failed to get Hash from remote, path: ${path}`, remoteMeta);
 
                 this.state.updateFileState(path, {
                     local_mtime: file.stat.mtime,
@@ -406,7 +407,7 @@ export class SyncEngine {
                 
                 const remoteMeta = await this.client.getMetadata(this.toRemotePath(path));
                 const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
-                if (!rHash) console.warn(`无法从远端获取 Hash，冲突路径: ${path}`, remoteMeta);
+                if (!rHash) console.warn(`Failed to get Hash from remote, conflict path: ${path}`, remoteMeta);
 
                 const localHash = await calculateSHA256(localBuffer);
                 this.state.updateFileState(path, {
@@ -415,7 +416,7 @@ export class SyncEngine {
                     remote_hash: rHash
                 });
                 await this.state.save();
-                await this.logger.addLog({ action: 'Conflict', file: path, details: `保留本地，另存副本为 ${conflictPath}` });
+                await this.logger.addLog({ action: 'Conflict', file: path, details: `Keep local, save copy as ${conflictPath}` });
             }
         }
         
@@ -429,7 +430,7 @@ export class SyncEngine {
                     await this.client.uploadFileBase64(this.toRemotePath('.sync_history.json'), b64);
                 }
             } catch (e: any) {
-                console.error('上传日志失败', e);
+                console.error('Failed to upload log', e);
             }
         }
     }
