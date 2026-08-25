@@ -18,6 +18,11 @@ export class SyncLogger {
 
     async addLog(entry: Omit<LogEntry, 'time'>) {
         this.buffer.push({ ...entry, time: Date.now() });
+        if (entry.details) {
+            console.log(`[SynologySync] ${entry.action}: ${entry.file} - ${entry.details}`);
+        } else {
+            console.log(`[SynologySync] ${entry.action}: ${entry.file}`);
+        }
     }
 
     /**
@@ -48,10 +53,9 @@ export class SyncLogger {
         return [];
     }
 
-    async getLogContentBase64(): Promise<string | null> {
+    async getLogContentBuffer(): Promise<ArrayBuffer | null> {
         if (await this.app.vault.adapter.exists(this.logPath)) {
-            const buffer = await this.app.vault.adapter.readBinary(this.logPath);
-            return arrayBufferToBase64(buffer);
+            return await this.app.vault.adapter.readBinary(this.logPath);
         }
         return null;
     }
