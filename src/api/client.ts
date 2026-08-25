@@ -216,30 +216,54 @@ export class SynologyClient {
 	}
 
 	/**
-	 * 创建或覆盖文件 (对于小文件 < 1MB 使用此接口最稳定，适合笔记同步)
+	 * 创建或覆盖文件 (通过 multipart/form-data 上传，支持大文件)
 	 */
-	async uploadFileBase64(path: string, base64Content: string, isRetry: boolean = false): Promise<any> {
-		const endpoint = '/api/SynologyDrive/default/v2/files';
+	async uploadFile(path: string, buffer: ArrayBuffer, isRetry: boolean = false): Promise<any> {
+		const endpoint = '/api/SynologyDrive/default/v2/files/upload';
 		const url = new URL(this.baseUrl + endpoint);
-		url.searchParams.append('type', 'file');
-		url.searchParams.append('path', path);
-		url.searchParams.append('conflict_action', 'overwrite');
+		
 		if (this.sid) url.searchParams.append('_sid', this.sid);
+
+		const boundary = '----WebKitFormBoundarySynoSync' + Math.random().toString(36).substring(2);
+		const encoder = new TextEncoder();
+		const parts: Uint8Array[] = [];
+
+		const appendField = (name: string, value: string) => {
+			parts.push(encoder.encode(`--${boundary}\r\n`));
+			parts.push(encoder.encode(`Content-Disposition: form-data; name="${name}"\r\n\r\n`));
+			parts.push(encoder.encode(`${value}\r\n`));
+		};
+
+		appendField('type', 'file');
+		appendField('path', path);
+		appendField('conflict_action', 'overwrite');
+
+		parts.push(encoder.encode(`--${boundary}\r\n`));
+		const filename = path.split('/').pop() || 'upload.bin';
+		parts.push(encoder.encode(`Content-Disposition: form-data; name="file"; filename="${encodeURIComponent(filename)}"\r\n`));
+		parts.push(encoder.encode(`Content-Type: application/octet-stream\r\n\r\n`));
+		parts.push(new Uint8Array(buffer));
+		parts.push(encoder.encode(`\r\n--${boundary}--\r\n`));
+
+		const totalLength = parts.reduce((acc, part) => acc + part.length, 0);
+		const body = new Uint8Array(totalLength);
+		let offset = 0;
+		for (const part of parts) {
+			body.set(part, offset);
+			offset += part.length;
+		}
 
 		let req: RequestUrlParam = {
 			url: url.toString(),
-			method: 'POST',
+			method: 'PUT',
 			headers: {
 				'Accept': 'application/json',
-				'Content-Type': 'application/json'
+				'Content-Type': `multipart/form-data; boundary=${boundary}`
 			},
-			throw: false
+			throw: false,
+			body: body.buffer
 		};
 		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
-		
-		req.body = JSON.stringify({
-			file_content: base64Content
-		});
 
 		const res = await requestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
@@ -250,10 +274,10 @@ export class SynologyClient {
 				const parentPath = path.substring(0, path.lastIndexOf('/'));
 				if (parentPath && parentPath !== '/mydrive' && parentPath !== '') {
 					await this.ensureRemoteFolder(parentPath);
-					return this.uploadFileBase64(path, base64Content, true);
+					return this.uploadFile(path, buffer, true);
 				}
 			}
-			throw new Error(`API Error Code: ${code || 'Unknown'}`);
+			throw new Error(`API Error Code: ${code || 'Unknown'} (File: ${path})`);
 		}
 		
 		return res.json;
