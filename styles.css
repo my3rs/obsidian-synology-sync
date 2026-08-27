@@ -37,7 +37,13 @@
 .sync-log-time {
     color: var(--text-muted);
     font-family: monospace;
+    font-size: 0.8em;
     margin-right: 10px;
+}
+.sync-log-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
 }
 .sync-log-action {
     display: inline-block;
@@ -51,6 +57,7 @@
 .sync-log-action.error { color: var(--color-red); }
 .sync-log-file {
     color: var(--text-normal);
+    word-break: break-all;
 }
 .sync-log-details {
     display: block;

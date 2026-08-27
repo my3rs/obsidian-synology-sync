@@ -1,4 +1,4 @@
-import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
+import { App, Modal, Notice, PluginSettingTab, Setting } from 'obsidian';
 import SynologySyncPlugin from './main';
 import { SynologyClient } from './api/client';
 import { t } from './locales';
@@ -10,6 +10,7 @@ export interface SynologySyncSettings {
 	otpCode: string;
 	sid: string;
 	syncFolder: string;
+	lastSyncTime?: number;
 }
 
 export const DEFAULT_SETTINGS: SynologySyncSettings = {
@@ -20,6 +21,44 @@ export const DEFAULT_SETTINGS: SynologySyncSettings = {
 	sid: '',
 	syncFolder: '/ObsidianSync',
 };
+
+class ConfirmModal extends Modal {
+	message: string;
+	onConfirm: () => void;
+
+	constructor(app: App, message: string, onConfirm: () => void) {
+		super(app);
+		this.message = message;
+		this.onConfirm = onConfirm;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.setText(this.message);
+		
+		new Setting(contentEl)
+			.addButton((btn) =>
+				btn
+					.setButtonText('Cancel')
+					.onClick(() => {
+						this.close();
+					}))
+			.addButton((btn) =>
+				btn
+					.setButtonText('Confirm')
+					.setCta()
+					.onClick(() => {
+						this.close();
+						this.onConfirm();
+					}));
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
 
 export class SynologySyncSettingTab extends PluginSettingTab {
 	plugin: SynologySyncPlugin;
@@ -39,7 +78,7 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			.setDesc(t('settings.nasUrl.desc'))
 			.addText((text) =>
 				text
-					.setPlaceholder('https://...')
+					.setPlaceholder('HTTPS://...')
 					.setValue(this.plugin.settings.nasUrl)
 					.onChange(async (value) => {
 						this.plugin.settings.nasUrl = value;
@@ -52,7 +91,7 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			.setDesc(t('settings.username.desc'))
 			.addText((text) =>
 				text
-					.setPlaceholder('admin')
+					.setPlaceholder('Admin')
 					.setValue(this.plugin.settings.username)
 					.onChange(async (value) => {
 						this.plugin.settings.username = value;
@@ -65,7 +104,7 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			.setDesc(t('settings.password.desc'))
 			.addText((text) => {
 				text.inputEl.type = 'password';
-				text.setPlaceholder('password')
+				text.setPlaceholder('Password')
 					.setValue(this.plugin.settings.password)
 					.onChange(async (value) => {
 						this.plugin.settings.password = value;
@@ -117,13 +156,14 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 							await this.plugin.saveSettings();
 							new Notice(t('notice.connSuccess'));
 							this.display(); // 刷新 UI
-						} catch (err: any) {
-							new Notice(t('notice.connFailed', { error: err.message }));
+						} catch (err: unknown) {
+							const errorMsg = err instanceof Error ? err.message : String(err);
+							new Notice(t('notice.connFailed', { error: errorMsg }));
 						}
 					});
 			});
 
-		containerEl.createEl('h3', { text: t('settings.dangerZone'), cls: 'setting-item-heading' });
+		new Setting(containerEl).setName("").setHeading();
 		
 		new Setting(containerEl)
 			.setName(t('settings.forceUpload.name'))
@@ -131,10 +171,10 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			.addButton((btn) => {
 				btn.setButtonText(t('settings.forceUpload.btn'))
 				   .setWarning()
-				   .onClick(async () => {
-					   if (confirm(t('settings.forceUpload.confirm'))) {
-						   await this.plugin.doForceUpload();
-					   }
+				   .onClick(() => {
+					   new ConfirmModal(this.app, t('settings.forceUpload.confirm'), () => {
+						   void this.plugin.doForceUpload();
+					   }).open();
 				   });
 			});
 
@@ -144,10 +184,10 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			.addButton((btn) => {
 				btn.setButtonText(t('settings.forceDownload.btn'))
 				   .setWarning()
-				   .onClick(async () => {
-					   if (confirm(t('settings.forceDownload.confirm'))) {
-						   await this.plugin.doForceDownload();
-					   }
+				   .onClick(() => {
+					   new ConfirmModal(this.app, t('settings.forceDownload.confirm'), () => {
+						   void this.plugin.doForceDownload();
+					   }).open();
 				   });
 			});
 
@@ -156,10 +196,10 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			.setDesc(t('settings.rebuild.desc'))
 			.addButton((btn) => {
 				btn.setButtonText(t('settings.rebuild.btn'))
-				   .onClick(async () => {
-					   if (confirm(t('settings.rebuild.confirm'))) {
-						   await this.plugin.doRebuildSyncState();
-					   }
+				   .onClick(() => {
+					   new ConfirmModal(this.app, t('settings.rebuild.confirm'), () => {
+						   void this.plugin.doRebuildSyncState();
+					   }).open();
 				   });
 			});
 	}

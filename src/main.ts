@@ -1,4 +1,4 @@
-import { Notice, Plugin, arrayBufferToBase64 } from 'obsidian';
+import { Notice, Plugin, setIcon, setTooltip, TAbstractFile } from 'obsidian';
 import {
 	DEFAULT_SETTINGS,
 	SynologySyncSettings,
@@ -8,68 +8,69 @@ import { t } from './locales';
 
 
 import type { SyncLogger } from './sync/logger';
-
 type SyncUIState = 
 	| 'idle'
 	| 'syncing' 
 	| 'force-uploading' 
 	| 'force-downloading' 
 	| 'rebuilding' 
-	| 'success-synced' 
-	| 'success-uptodate' 
 	| 'error';
 
 export default class SynologySyncPlugin extends Plugin {
 	settings!: SynologySyncSettings;
 	public logger!: SyncLogger;
 	private statusBarItem!: HTMLElement;
-	private syncTimeout: NodeJS.Timeout | null = null;
+	private syncTimeout: number | null = null;
 	private isSyncing: boolean = false;
-	private lastSyncSuccessTime: number | null = null;
 	private currentUIState: SyncUIState = 'idle';
-	private uiResetTimer: NodeJS.Timeout | null = null;
+	private uiResetTimer: number | null = null;
 	
 	updateStatusBar(state: SyncUIState) {
 		this.currentUIState = state;
 		if (this.uiResetTimer) {
-			clearTimeout(this.uiResetTimer);
+			window.clearTimeout(this.uiResetTimer);
 			this.uiResetTimer = null;
 		}
 
+		this.statusBarItem.empty();
+		let iconName = 'cloud';
+		let tooltipText = '';
+
 		switch (state) {
 			case 'idle':
-				if (this.lastSyncSuccessTime) {
-					const date = new Date(this.lastSyncSuccessTime);
+				iconName = this.settings.lastSyncTime ? 'check-circle' : 'cloud';
+				if (this.settings.lastSyncTime) {
+					const date = new Date(this.settings.lastSyncTime);
 					const timeStr = date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
-					this.statusBarItem.setText(t('status.standbyWithTime', { time: timeStr }));
+					tooltipText = t('status.standbyWithTime', { time: timeStr });
 				} else {
-					this.statusBarItem.setText(t('status.standby'));
+					tooltipText = t('status.standby');
 				}
 				break;
 			case 'syncing':
-				this.statusBarItem.setText(t('status.syncing'));
+				iconName = 'refresh-cw';
+				tooltipText = t('status.syncing');
 				break;
 			case 'force-uploading':
-				this.statusBarItem.setText(t('status.forceUploading'));
+				iconName = 'upload-cloud';
+				tooltipText = t('status.forceUploading');
 				break;
 			case 'force-downloading':
-				this.statusBarItem.setText(t('status.forceDownloading'));
+				iconName = 'download-cloud';
+				tooltipText = t('status.forceDownloading');
 				break;
 			case 'rebuilding':
-				this.statusBarItem.setText(t('status.rebuilding'));
-				break;
-			case 'success-synced':
-				this.statusBarItem.setText(t('status.synced'));
-				this.uiResetTimer = setTimeout(() => this.updateStatusBar('idle'), 3000);
-				break;
-			case 'success-uptodate':
-				this.statusBarItem.setText(t('status.upToDate'));
-				this.uiResetTimer = setTimeout(() => this.updateStatusBar('idle'), 3000);
+				iconName = 'database';
+				tooltipText = t('status.rebuilding');
 				break;
 			case 'error':
-				this.statusBarItem.setText(t('status.error'));
+				iconName = 'alert-triangle';
+				tooltipText = t('status.error');
 				break;
 		}
+
+		setIcon(this.statusBarItem, iconName);
+		setTooltip(this.statusBarItem, tooltipText, { placement: 'top' });
 	}
 
 	async onload() {
@@ -103,7 +104,7 @@ export default class SynologySyncPlugin extends Plugin {
 					}
 
 					const client = new SynologyClient(nasUrl, username, password);
-					(client as any).sid = sid; // 注入现有的 sid
+					(client as unknown as { sid: string }).sid = sid; // 注入现有的 sid
 
 					// 读取文件内容为二进制
 					const buffer = await this.app.vault.readBinary(activeFile);
@@ -119,16 +120,16 @@ export default class SynologySyncPlugin extends Plugin {
 					notice = n;
 					await client.uploadFile(targetPath, buffer);
 					n.setMessage(t('notice.uploadSuccess'));
-					setTimeout(() => n.hide(), 3000);
-				} catch (err: any) {
+					window.setTimeout(() => n.hide(), 3000);
+				} catch (err: unknown) {
+					const errorMsg = err instanceof Error ? err.message : String(err);
 					const n = notice;
 					if (n) {
-						n.setMessage(t('notice.uploadFailed', { error: err.message }));
-						setTimeout(() => n.hide(), 5000);
+						n.setMessage(t('notice.uploadFailed', { error: errorMsg }));
+						window.setTimeout(() => n.hide(), 5000);
 					} else {
-						new Notice(t('notice.uploadFailed', { error: err.message }));
+						new Notice(t('notice.uploadFailed', { error: errorMsg }));
 					}
-					console.error(err);
 				}
 			}
 		});
@@ -155,7 +156,7 @@ export default class SynologySyncPlugin extends Plugin {
 					}
 
 					const client = new SynologyClient(nasUrl, username, password);
-					(client as any).sid = sid;
+					(client as unknown as { sid: string }).sid = sid;
 
 					let targetPath = `${syncFolder}/${activeFile.path}`;
 					if (!targetPath.startsWith('/mydrive/') && !targetPath.startsWith('/team-folders/')) {
@@ -170,29 +171,30 @@ export default class SynologySyncPlugin extends Plugin {
 					await localFs.write(activeFile.path, buffer);
 					
 					n.setMessage(t('notice.downloadSuccess'));
-					setTimeout(() => n.hide(), 3000);
-				} catch (err: any) {
+					window.setTimeout(() => n.hide(), 3000);
+				} catch (err: unknown) {
+					const errorMsg = err instanceof Error ? err.message : String(err);
 					const n = notice;
 					if (n) {
-						n.setMessage(t('notice.downloadFailed', { error: err.message }));
-						setTimeout(() => n.hide(), 5000);
+						n.setMessage(t('notice.downloadFailed', { error: errorMsg }));
+						window.setTimeout(() => n.hide(), 5000);
 					} else {
-						new Notice(t('notice.downloadFailed', { error: err.message }));
+						new Notice(t('notice.downloadFailed', { error: errorMsg }));
 					}
-					console.error(err);
 				}
 			}
 		});
 
 		// 添加状态栏提示
 		this.statusBarItem = this.addStatusBarItem();
+		this.statusBarItem.classList.add('mod-clickable');
 		this.updateStatusBar('idle');
 		this.statusBarItem.onClickEvent(() => {
-			this.runEngineSync(false, true);
+			void this.runEngineSync(false, true);
 		});
 		
 		const ribbonIconEl = this.addRibbonIcon('refresh-cw', t('plugin.name'), (evt: MouseEvent) => {
-			this.runEngineSync(false, true);
+			void this.runEngineSync(false, true);
 		});
 		if (ribbonIconEl.parentNode) {
 			ribbonIconEl.parentNode.insertBefore(ribbonIconEl, ribbonIconEl.parentNode.firstChild);
@@ -208,13 +210,13 @@ export default class SynologySyncPlugin extends Plugin {
 		// 定时轮询远端变更 (每 30 秒一次 Quick Sync)
 		this.registerInterval(
 			window.setInterval(() => {
-				this.runEngineSync(false);
+				void this.runEngineSync(false);
 			}, 30 * 1000)
 		);
 
 		// 启动时执行一次全量同步 (Full Sync) 探测远端删除，为了不阻塞，延迟执行
-		setTimeout(() => {
-			this.runEngineSync(true);
+		window.setTimeout(() => {
+			void this.runEngineSync(true);
 		}, 2000);
 		
 		// 同步引擎命令
@@ -244,17 +246,17 @@ export default class SynologySyncPlugin extends Plugin {
 		});
 	}
 
-	triggerAutoSync(file?: any) {
+	triggerAutoSync(file?: TAbstractFile) {
 		// 忽略 Obsidian 自身的配置和插件产生的变更（比如我们自己的 sync_data.json），否则会陷入无限循环同步
-		if (file && file.path && file.path.startsWith('.obsidian/')) {
+		if (file && file.path && file.path.startsWith(this.app.vault.configDir + '/')) {
 			return;
 		}
 
 		if (this.syncTimeout) {
-			clearTimeout(this.syncTimeout);
+			window.clearTimeout(this.syncTimeout);
 		}
-		this.syncTimeout = setTimeout(() => {
-			this.runEngineSync(false);
+		this.syncTimeout = window.setTimeout(() => {
+			void this.runEngineSync(false);
 		}, 3000); // 停止打字 3 秒后自动同步
 	}
 
@@ -262,7 +264,7 @@ export default class SynologySyncPlugin extends Plugin {
 		const { nasUrl, username, password, otpCode, sid } = this.settings;
 		const { SynologyClient } = await import('./api/client');
 		const client = new SynologyClient(nasUrl, username, password, otpCode);
-		if (sid) (client as any).sid = sid;
+		if (sid) (client as unknown as { sid: string }).sid = sid;
 		return client;
 	}
 
@@ -277,7 +279,7 @@ export default class SynologySyncPlugin extends Plugin {
 		const { SyncState } = await import('./sync/state');
 
 		const client = new SynologyClient(nasUrl, username, password, otpCode);
-		(client as any).sid = sid;
+		(client as unknown as { sid: string }).sid = sid;
 
 		const state = new SyncState(this.app, this.manifest.dir!);
 		return new SyncEngine(this.app, client, state, this.logger, syncFolder);
@@ -303,38 +305,30 @@ export default class SynologySyncPlugin extends Plugin {
 			const hasChanges = await engine.runSync(fullScan);
 			
 			if (hasChanges) {
-				this.lastSyncSuccessTime = Date.now();
-				this.updateStatusBar('success-synced');
+				this.settings.lastSyncTime = Date.now();
+				void this.saveSettings();
+				this.updateStatusBar('idle');
 				if (syncNotice) {
 					syncNotice.setMessage(t('notice.engine.syncSuccess'));
-					setTimeout(() => syncNotice!.hide(), 3000);
+					window.setTimeout(() => syncNotice!.hide(), 3000);
 				}
 			} else {
-				this.updateStatusBar('success-uptodate');
+				this.updateStatusBar('idle');
 				if (syncNotice) {
 					syncNotice.setMessage(t('notice.engine.syncUpToDate'));
-					setTimeout(() => syncNotice!.hide(), 3000);
+					window.setTimeout(() => syncNotice!.hide(), 3000);
 				}
 			}
-		} catch (err: any) {
+		} catch (err: unknown) {
+			const errorMsg = err instanceof Error ? err.message : String(err);
 			this.updateStatusBar('error');
 			if (syncNotice) syncNotice.hide();
-			new Notice(t('notice.syncException', { error: err.message }));
-			console.error(err);
+			new Notice(t('notice.syncException', { error: errorMsg }));
 		} finally {
 			this.isSyncing = false;
 		}
 	}
 
-	private updateStatusBarIdle() {
-		if (this.lastSyncSuccessTime) {
-			const date = new Date(this.lastSyncSuccessTime);
-			const timeStr = date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
-			this.statusBarItem.setText(t('status.standbyWithTime', { time: timeStr }));
-		} else {
-			this.updateStatusBar('idle');
-		}
-	}
 
 	onunload() {
 		// 插件卸载时的清理逻辑
@@ -347,12 +341,14 @@ export default class SynologySyncPlugin extends Plugin {
 			this.updateStatusBar('force-uploading');
 			const engine = await this.getEngine();
 			await engine.forceUpload();
-			this.lastSyncSuccessTime = Date.now();
-			this.updateStatusBar('success-synced');
+			this.settings.lastSyncTime = Date.now();
+			void this.saveSettings();
+			this.updateStatusBar('idle');
 			new Notice(t('notice.forceUploadSuccess'));
-		} catch (e: any) {
+		} catch (e: unknown) {
+			const errorMsg = e instanceof Error ? e.message : String(e);
 			this.updateStatusBar('error');
-			new Notice(t('notice.forceUploadFailed', { error: e.message }));
+			new Notice(t('notice.forceUploadFailed', { error: errorMsg }));
 		} finally {
 			this.isSyncing = false;
 		}
@@ -365,12 +361,14 @@ export default class SynologySyncPlugin extends Plugin {
 			this.updateStatusBar('force-downloading');
 			const engine = await this.getEngine();
 			await engine.forceDownload();
-			this.lastSyncSuccessTime = Date.now();
-			this.updateStatusBar('success-synced');
+			this.settings.lastSyncTime = Date.now();
+			void this.saveSettings();
+			this.updateStatusBar('idle');
 			new Notice(t('notice.forceDownloadSuccess'));
-		} catch (e: any) {
+		} catch (e: unknown) {
+			const errorMsg = e instanceof Error ? e.message : String(e);
 			this.updateStatusBar('error');
-			new Notice(t('notice.forceDownloadFailed', { error: e.message }));
+			new Notice(t('notice.forceDownloadFailed', { error: errorMsg }));
 		} finally {
 			this.isSyncing = false;
 		}
@@ -383,12 +381,14 @@ export default class SynologySyncPlugin extends Plugin {
 			this.updateStatusBar('rebuilding');
 			const engine = await this.getEngine();
 			await engine.rebuildSyncState();
-			this.lastSyncSuccessTime = Date.now();
-			this.updateStatusBar('success-synced');
+			this.settings.lastSyncTime = Date.now();
+			void this.saveSettings();
+			this.updateStatusBar('idle');
 			new Notice(t('notice.rebuildSuccess'));
-		} catch (e: any) {
+		} catch (e: unknown) {
+			const errorMsg = e instanceof Error ? e.message : String(e);
 			this.updateStatusBar('error');
-			new Notice(t('notice.rebuildFailed', { error: e.message }));
+			new Notice(t('notice.rebuildFailed', { error: errorMsg }));
 		} finally {
 			this.isSyncing = false;
 		}

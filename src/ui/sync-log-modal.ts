@@ -1,5 +1,5 @@
-import { App, Modal, Setting } from 'obsidian';
-import { SyncLogger, LogEntry } from '../sync/logger';
+import { App, Modal } from 'obsidian';
+import { SyncLogger } from '../sync/logger';
 import { t } from '../locales';
 
 export class SyncLogModal extends Modal {
@@ -18,42 +18,35 @@ export class SyncLogModal extends Modal {
 
         const logs = await this.logger.getLogs();
         if (logs.length === 0) {
-            contentEl.createEl('p', { text: t('ui.logModal.empty') });
+            contentEl.createEl('p', { text: t('ui.logModal.empty') }).addClass('sync-log-empty');
             return;
         }
 
         const listContainer = contentEl.createDiv();
-        listContainer.style.maxHeight = '400px';
-        listContainer.style.overflowY = 'auto';
+        listContainer.addClass('sync-log-container');
 
         for (const log of logs) {
             const item = listContainer.createDiv();
-            item.style.padding = '8px';
-            item.style.borderBottom = '1px solid var(--background-modifier-border)';
+            item.addClass('sync-log-item');
             
             const timeStr = new Date(log.time).toLocaleString();
             
             const header = item.createDiv();
-            header.style.display = 'flex';
-            header.style.justifyContent = 'space-between';
-            header.style.marginBottom = '4px';
+            header.addClass('sync-log-header');
 
             const actionEl = header.createSpan({ text: log.action });
-            actionEl.style.fontWeight = 'bold';
+            actionEl.addClass('sync-log-action');
             this.styleActionEl(actionEl, log.action);
 
             const timeEl = header.createSpan({ text: timeStr });
-            timeEl.style.fontSize = '0.8em';
-            timeEl.style.color = 'var(--text-muted)';
+            timeEl.addClass('sync-log-time');
 
             const fileEl = item.createDiv({ text: log.file });
-            fileEl.style.wordBreak = 'break-all';
+            fileEl.addClass('sync-log-file');
             
             if (log.details) {
                 const detailsEl = item.createDiv({ text: log.details });
-                detailsEl.style.fontSize = '0.85em';
-                detailsEl.style.color = 'var(--text-faint)';
-                detailsEl.style.marginTop = '4px';
+                detailsEl.addClass('sync-log-details');
             }
         }
     }
@@ -61,17 +54,20 @@ export class SyncLogModal extends Modal {
     private styleActionEl(el: HTMLElement, action: string) {
         switch (action) {
             case 'Upload':
-                el.style.color = 'var(--text-accent)';
+                el.addClass('upload');
                 break;
             case 'Download':
-                el.style.color = 'var(--text-success)';
+                el.addClass('download');
                 break;
             case 'Delete Local':
             case 'Delete Remote':
-                el.style.color = 'var(--text-error)';
+                el.addClass('delete');
                 break;
             case 'Conflict':
-                el.style.color = 'var(--text-warning)';
+                el.addClass('conflict');
+                break;
+            case 'Error':
+                el.addClass('error');
                 break;
         }
     }
