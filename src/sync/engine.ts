@@ -317,11 +317,15 @@ export class SyncEngine {
             uploads: new Set(), downloads: new Set(),
             deletionsLocal: new Set(), deletionsRemote: new Set(), conflicts: new Set()
         };
-        for (const path of this.localChanges.keys()) {
-            plan.uploads.add(path);
+        const allFiles = this.app.vault.getFiles();
+        const currentPaths = new Set<string>();
+        for (const file of allFiles) {
+            if (file.path.startsWith('.obsidian/')) continue;
+            plan.uploads.add(file.path);
+            currentPaths.add(file.path);
         }
         for (const path of this.remoteChanges.keys()) {
-            if (!this.localChanges.has(path)) {
+            if (!currentPaths.has(path)) {
                 plan.deletionsRemote.add(path);
             }
         }
@@ -336,9 +340,11 @@ export class SyncEngine {
         for (const path of this.remoteChanges.keys()) {
             plan.downloads.add(path);
         }
-        for (const path of this.localChanges.keys()) {
-            if (!this.remoteChanges.has(path)) {
-                plan.deletionsLocal.add(path);
+        const allFiles = this.app.vault.getFiles();
+        for (const file of allFiles) {
+            if (file.path.startsWith('.obsidian/')) continue;
+            if (!this.remoteChanges.has(file.path)) {
+                plan.deletionsLocal.add(file.path);
             }
         }
         return plan;
