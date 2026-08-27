@@ -5,6 +5,7 @@ import {
 	SynologySyncSettingTab,
 } from './settings';
 import { t } from './locales';
+import { HISTORY_VIEW_TYPE, HistoryView } from './ui/history-view';
 
 import type { SyncLogger } from './sync/logger';
 
@@ -18,6 +19,20 @@ export default class SynologySyncPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		
+		this.registerView(
+			HISTORY_VIEW_TYPE,
+			(leaf) => new HistoryView(leaf, this)
+		);
+		
+		this.addCommand({
+			id: 'synology-sync-show-history',
+			name: t('command.showHistory'),
+			callback: () => {
+				this.openHistoryView();
+			}
+		});
+
 		
 		const { SyncLogger } = await import('./sync/logger');
 		this.logger = new SyncLogger(this.app, this.manifest.dir!);
@@ -133,6 +148,14 @@ export default class SynologySyncPlugin extends Plugin {
 		this.statusBarItem.onClickEvent(() => {
 			this.runEngineSync(false);
 		});
+		
+		const ribbonIconEl = this.addRibbonIcon('refresh-cw', t('plugin.name'), (evt: MouseEvent) => {
+			this.runEngineSync(false);
+		});
+		if (ribbonIconEl.parentNode) {
+			ribbonIconEl.parentNode.insertBefore(ribbonIconEl, ribbonIconEl.parentNode.firstChild);
+		}
+
 
 		// 监听本地文件变更，防抖触发同步 (3秒)
 		this.registerEvent(this.app.vault.on('modify', (file) => this.triggerAutoSync(file)));
@@ -151,6 +174,10 @@ export default class SynologySyncPlugin extends Plugin {
 		setTimeout(() => {
 			this.runEngineSync(true);
 		}, 2000);
+		
+		this.app.workspace.onLayoutReady(() => {
+			this.initHistoryLeaf();
+		});
 
 		// 同步引擎命令
 		this.addCommand({
@@ -193,7 +220,15 @@ export default class SynologySyncPlugin extends Plugin {
 		}, 3000); // 停止打字 3 秒后自动同步
 	}
 
-	private async getEngine() {
+	async getClient() {
+		const { nasUrl, username, password, otpCode, sid } = this.settings;
+		const { SynologyClient } = await import('./api/client');
+		const client = new SynologyClient(nasUrl, username, password, otpCode);
+		if (sid) (client as any).sid = sid;
+		return client;
+	}
+
+	async getEngine() {
 		const { nasUrl, username, password, otpCode, sid, syncFolder } = this.settings;
 		if (!sid || !syncFolder) {
 			throw new Error(t('notice.nasParamsMissing'));
@@ -302,6 +337,36 @@ export default class SynologySyncPlugin extends Plugin {
 			this.isSyncing = false;
 			this.updateStatusBarIdle();
 		}
+	}
+
+	async initHistoryLeaf() {
+		const { workspace } = this.app;
+		let leaf = workspace.getLeavesOfType(HISTORY_VIEW_TYPE)[0];
+		if (!leaf) {
+			const rightLeaf = workspace.getRightLeaf(false);
+			if (rightLeaf) {
+				await rightLeaf.setViewState({
+					type: HISTORY_VIEW_TYPE,
+					active: false,
+				});
+			}
+		}
+	}
+
+	async openHistoryView() {
+		const workspace = this.app.workspace;
+		let leaf = workspace.getLeavesOfType(HISTORY_VIEW_TYPE)[0];
+		if (!leaf) {
+			const rightLeaf = workspace.getRightLeaf(false);
+			if (rightLeaf) {
+				leaf = rightLeaf;
+				await leaf.setViewState({
+					type: HISTORY_VIEW_TYPE,
+					active: true,
+				});
+			} else { return; }
+		}
+		workspace.revealLeaf(leaf);
 	}
 
 	async loadSettings() {

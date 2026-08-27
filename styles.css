@@ -1,8 +1,179 @@
-/*
+.synology-sync-ribbon-class {
+    color: var(--text-muted);
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.synology-sync-ribbon-class:hover {
+    color: var(--text-normal);
+}
 
-If your plugin does not need CSS, delete this file.
+.setting-item-heading {
+    margin-top: 2em;
+    padding-bottom: 0.5em;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
 
-*/
+.mod-warning .setting-item-name {
+    color: var(--text-error);
+    font-weight: bold;
+}
+
+/* Sync Log Modal */
+.sync-log-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 10px;
+    background: var(--background-primary-alt);
+}
+.sync-log-item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+    font-size: 0.9em;
+}
+.sync-log-item:last-child {
+    border-bottom: none;
+}
+.sync-log-time {
+    color: var(--text-muted);
+    font-family: monospace;
+    margin-right: 10px;
+}
+.sync-log-action {
+    display: inline-block;
+    min-width: 80px;
+    font-weight: 600;
+}
+.sync-log-action.upload { color: var(--color-blue); }
+.sync-log-action.download { color: var(--color-green); }
+.sync-log-action.delete { color: var(--color-red); }
+.sync-log-action.conflict { color: var(--color-orange); }
+.sync-log-action.error { color: var(--color-red); }
+.sync-log-file {
+    color: var(--text-normal);
+}
+.sync-log-details {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-faint);
+    font-size: 0.85em;
+    margin-left: 175px; /* align with file path approx */
+}
+.sync-log-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 20px 0;
+}
+
+/* History View Styles */
+.history-view-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.history-title-area h4 {
+    margin: 0 0 5px 0;
+}
+
+.history-file-path {
+    font-size: 0.85em;
+    color: var(--text-muted);
+    word-break: break-all;
+}
+
+.history-refresh-btn {
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 4px;
+    border-radius: 4px;
+}
+
+.history-refresh-btn:hover {
+    color: var(--text-normal);
+    background-color: var(--background-modifier-hover);
+}
+
+.history-spinning svg {
+    animation: history-spin 1s linear infinite;
+}
+
+@keyframes history-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.history-list-container {
+    overflow-y: auto;
+    height: calc(100% - 60px);
+}
+
+.history-empty-state {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 30px 10px;
+    font-style: italic;
+}
+
+.history-error-state {
+    color: var(--text-error);
+    text-align: center;
+    padding: 20px 10px;
+}
+
+.history-revision-card {
+    background-color: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 12px;
+    transition: background-color 0.15s ease-in-out;
+}
+
+.history-revision-card:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.history-revision-current {
+    border-color: var(--color-accent);
+    background-color: rgba(var(--color-accent-rgb), 0.05);
+}
+
+.history-rev-header {
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.history-rev-date {
+    color: var(--text-normal);
+}
+
+.history-rev-meta {
+    font-size: 0.85em;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.history-rev-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.history-rev-actions button {
+    padding: 4px 10px;
+    font-size: 0.85em;
+    background-color: var(--interactive-normal);
+    border: 1px solid var(--background-modifier-border);
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.history-rev-actions button:hover {
+    background-color: var(--interactive-hover);
+}

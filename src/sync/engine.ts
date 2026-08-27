@@ -60,13 +60,15 @@ export class SyncEngine {
     /**
      * 运行同步
      */
-    async runSync(fullScan: boolean = false): Promise<boolean> {
+    async runSync(fullScan: boolean = false, showNotice: boolean = false): Promise<boolean> {
         if (this.isSyncing) return false;
         
         let notice: Notice | null = null;
         try {
             this.isSyncing = true;
-            notice = new Notice(t('notice.engine.syncing'), 0); // 0 means it won't auto-hide
+            if (showNotice) {
+                notice = new Notice(t('notice.engine.syncing'), 0); // 0 means it won't auto-hide
+            }
             
             await this.state.load();
             await this.detectLocalChanges();
