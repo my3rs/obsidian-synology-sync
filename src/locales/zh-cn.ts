@@ -7,6 +7,7 @@ export default {
 	'command.runQuick': '运行 Synology Sync 同步 (快速)',
 	'command.runFull': '运行 Synology Sync 同步 (全量)',
 	'command.showLog': '查看 Synology Sync 同步日志',
+	'command.showHistory': '查看群晖历史版本',
 
 	'notice.noActiveFile': '当前没有活动文件',
 	'notice.loginRequired': '请先在设置中登录 Synology Drive',
@@ -80,4 +81,19 @@ export default {
 	// ui/sync-log-modal.ts
 	'ui.logModal.title': 'Synology Sync 同步日志',
 	'ui.logModal.empty': '暂无同步记录。',
+
+	// ui/history-view.ts
+	'view.history.title': '群晖历史版本',
+	'view.history.noActiveFile': '请在左侧打开一个文件以查看其历史版本。',
+	'view.history.fileNotOnRemote': '该文件尚未同步到群晖，无历史版本。',
+	'view.history.noRevisions': '该文件在群晖上暂无历史版本记录。',
+	'view.history.loadFailed': '加载历史记录失败',
+	'view.history.btnRestore': '恢复此版本',
+	'view.history.btnSaveCopy': '另存为副本',
+	'view.history.restoring': '正在恢复历史版本...',
+	'view.history.restoreSuccess': '恢复成功！',
+	'view.history.restoreFailed': '恢复失败',
+	'view.history.downloading': '正在下载副本...',
+	'view.history.saveCopySuccess': '已另存为副本',
+	'view.history.saveCopyFailed': '保存副本失败',
 };
