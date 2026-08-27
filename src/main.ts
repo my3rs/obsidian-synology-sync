@@ -5,9 +5,19 @@ import {
 	SynologySyncSettingTab,
 } from './settings';
 import { t } from './locales';
-import { HISTORY_VIEW_TYPE, HistoryView } from './ui/history-view';
+
 
 import type { SyncLogger } from './sync/logger';
+
+type SyncUIState = 
+	| 'idle'
+	| 'syncing' 
+	| 'force-uploading' 
+	| 'force-downloading' 
+	| 'rebuilding' 
+	| 'success-synced' 
+	| 'success-uptodate' 
+	| 'error';
 
 export default class SynologySyncPlugin extends Plugin {
 	settings!: SynologySyncSettings;
@@ -16,23 +26,55 @@ export default class SynologySyncPlugin extends Plugin {
 	private syncTimeout: NodeJS.Timeout | null = null;
 	private isSyncing: boolean = false;
 	private lastSyncSuccessTime: number | null = null;
+	private currentUIState: SyncUIState = 'idle';
+	private uiResetTimer: NodeJS.Timeout | null = null;
+	
+	updateStatusBar(state: SyncUIState) {
+		this.currentUIState = state;
+		if (this.uiResetTimer) {
+			clearTimeout(this.uiResetTimer);
+			this.uiResetTimer = null;
+		}
+
+		switch (state) {
+			case 'idle':
+				if (this.lastSyncSuccessTime) {
+					const date = new Date(this.lastSyncSuccessTime);
+					const timeStr = date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
+					this.statusBarItem.setText(t('status.standbyWithTime', { time: timeStr }));
+				} else {
+					this.statusBarItem.setText(t('status.standby'));
+				}
+				break;
+			case 'syncing':
+				this.statusBarItem.setText(t('status.syncing'));
+				break;
+			case 'force-uploading':
+				this.statusBarItem.setText(t('status.forceUploading'));
+				break;
+			case 'force-downloading':
+				this.statusBarItem.setText(t('status.forceDownloading'));
+				break;
+			case 'rebuilding':
+				this.statusBarItem.setText(t('status.rebuilding'));
+				break;
+			case 'success-synced':
+				this.statusBarItem.setText(t('status.synced'));
+				this.uiResetTimer = setTimeout(() => this.updateStatusBar('idle'), 3000);
+				break;
+			case 'success-uptodate':
+				this.statusBarItem.setText(t('status.upToDate'));
+				this.uiResetTimer = setTimeout(() => this.updateStatusBar('idle'), 3000);
+				break;
+			case 'error':
+				this.statusBarItem.setText(t('status.error'));
+				break;
+		}
+	}
 
 	async onload() {
 		await this.loadSettings();
 		
-		this.registerView(
-			HISTORY_VIEW_TYPE,
-			(leaf) => new HistoryView(leaf, this)
-		);
-		
-		this.addCommand({
-			id: 'synology-sync-show-history',
-			name: t('command.showHistory'),
-			callback: () => {
-				this.openHistoryView();
-			}
-		});
-
 		
 		const { SyncLogger } = await import('./sync/logger');
 		this.logger = new SyncLogger(this.app, this.manifest.dir!);
@@ -144,13 +186,13 @@ export default class SynologySyncPlugin extends Plugin {
 
 		// 添加状态栏提示
 		this.statusBarItem = this.addStatusBarItem();
-		this.statusBarItem.setText(t('status.standby'));
+		this.updateStatusBar('idle');
 		this.statusBarItem.onClickEvent(() => {
-			this.runEngineSync(false);
+			this.runEngineSync(false, true);
 		});
 		
 		const ribbonIconEl = this.addRibbonIcon('refresh-cw', t('plugin.name'), (evt: MouseEvent) => {
-			this.runEngineSync(false);
+			this.runEngineSync(false, true);
 		});
 		if (ribbonIconEl.parentNode) {
 			ribbonIconEl.parentNode.insertBefore(ribbonIconEl, ribbonIconEl.parentNode.firstChild);
@@ -175,16 +217,12 @@ export default class SynologySyncPlugin extends Plugin {
 			this.runEngineSync(true);
 		}, 2000);
 		
-		this.app.workspace.onLayoutReady(() => {
-			this.initHistoryLeaf();
-		});
-
 		// 同步引擎命令
 		this.addCommand({
 			id: 'synology-sync-run',
 			name: t('command.runQuick'),
 			callback: async () => {
-				await this.runEngineSync(false);
+				await this.runEngineSync(false, true);
 			}
 		});
 
@@ -192,7 +230,7 @@ export default class SynologySyncPlugin extends Plugin {
 			id: 'synology-sync-run-full',
 			name: t('command.runFull'),
 			callback: async () => {
-				await this.runEngineSync(true);
+				await this.runEngineSync(true, true);
 			}
 		});
 
@@ -245,28 +283,42 @@ export default class SynologySyncPlugin extends Plugin {
 		return new SyncEngine(this.app, client, state, this.logger, syncFolder);
 	}
 
-	async runEngineSync(fullScan: boolean) {
-		if (this.isSyncing) return;
+	async runEngineSync(fullScan: boolean, showNotice: boolean = false) {
+		if (this.isSyncing) {
+			if (showNotice) new Notice(t('notice.engine.syncing'));
+			return;
+		}
+		
+		let syncNotice: Notice | null = null;
 		
 		try {
 			this.isSyncing = true;
-			this.statusBarItem.setText(t('status.syncing'));
+			this.updateStatusBar('syncing');
+			
+			if (showNotice) {
+				syncNotice = new Notice(t('notice.engine.syncing'), 0);
+			}
 			
 			const engine = await this.getEngine();
 			const hasChanges = await engine.runSync(fullScan);
 			
 			if (hasChanges) {
 				this.lastSyncSuccessTime = Date.now();
-				this.statusBarItem.setText(t('status.synced'));
-				// 3秒后恢复待命状态
-				setTimeout(() => {
-					if (!this.isSyncing) this.updateStatusBarIdle();
-				}, 3000);
+				this.updateStatusBar('success-synced');
+				if (syncNotice) {
+					syncNotice.setMessage(t('notice.engine.syncSuccess'));
+					setTimeout(() => syncNotice!.hide(), 3000);
+				}
 			} else {
-				this.updateStatusBarIdle();
+				this.updateStatusBar('success-uptodate');
+				if (syncNotice) {
+					syncNotice.setMessage(t('notice.engine.syncUpToDate'));
+					setTimeout(() => syncNotice!.hide(), 3000);
+				}
 			}
 		} catch (err: any) {
-			this.statusBarItem.setText(t('status.error'));
+			this.updateStatusBar('error');
+			if (syncNotice) syncNotice.hide();
 			new Notice(t('notice.syncException', { error: err.message }));
 			console.error(err);
 		} finally {
@@ -280,7 +332,7 @@ export default class SynologySyncPlugin extends Plugin {
 			const timeStr = date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
 			this.statusBarItem.setText(t('status.standbyWithTime', { time: timeStr }));
 		} else {
-			this.statusBarItem.setText(t('status.standby'));
+			this.updateStatusBar('idle');
 		}
 	}
 
@@ -292,16 +344,17 @@ export default class SynologySyncPlugin extends Plugin {
 		if (this.isSyncing) return;
 		try {
 			this.isSyncing = true;
-			this.statusBarItem.setText(t('status.forceUploading'));
+			this.updateStatusBar('force-uploading');
 			const engine = await this.getEngine();
 			await engine.forceUpload();
 			this.lastSyncSuccessTime = Date.now();
+			this.updateStatusBar('success-synced');
 			new Notice(t('notice.forceUploadSuccess'));
 		} catch (e: any) {
+			this.updateStatusBar('error');
 			new Notice(t('notice.forceUploadFailed', { error: e.message }));
 		} finally {
 			this.isSyncing = false;
-			this.updateStatusBarIdle();
 		}
 	}
 
@@ -309,16 +362,17 @@ export default class SynologySyncPlugin extends Plugin {
 		if (this.isSyncing) return;
 		try {
 			this.isSyncing = true;
-			this.statusBarItem.setText(t('status.forceDownloading'));
+			this.updateStatusBar('force-downloading');
 			const engine = await this.getEngine();
 			await engine.forceDownload();
 			this.lastSyncSuccessTime = Date.now();
+			this.updateStatusBar('success-synced');
 			new Notice(t('notice.forceDownloadSuccess'));
 		} catch (e: any) {
+			this.updateStatusBar('error');
 			new Notice(t('notice.forceDownloadFailed', { error: e.message }));
 		} finally {
 			this.isSyncing = false;
-			this.updateStatusBarIdle();
 		}
 	}
 
@@ -326,47 +380,18 @@ export default class SynologySyncPlugin extends Plugin {
 		if (this.isSyncing) return;
 		try {
 			this.isSyncing = true;
-			this.statusBarItem.setText(t('status.rebuilding'));
+			this.updateStatusBar('rebuilding');
 			const engine = await this.getEngine();
 			await engine.rebuildSyncState();
 			this.lastSyncSuccessTime = Date.now();
+			this.updateStatusBar('success-synced');
 			new Notice(t('notice.rebuildSuccess'));
 		} catch (e: any) {
+			this.updateStatusBar('error');
 			new Notice(t('notice.rebuildFailed', { error: e.message }));
 		} finally {
 			this.isSyncing = false;
-			this.updateStatusBarIdle();
 		}
-	}
-
-	async initHistoryLeaf() {
-		const { workspace } = this.app;
-		let leaf = workspace.getLeavesOfType(HISTORY_VIEW_TYPE)[0];
-		if (!leaf) {
-			const rightLeaf = workspace.getRightLeaf(false);
-			if (rightLeaf) {
-				await rightLeaf.setViewState({
-					type: HISTORY_VIEW_TYPE,
-					active: false,
-				});
-			}
-		}
-	}
-
-	async openHistoryView() {
-		const workspace = this.app.workspace;
-		let leaf = workspace.getLeavesOfType(HISTORY_VIEW_TYPE)[0];
-		if (!leaf) {
-			const rightLeaf = workspace.getRightLeaf(false);
-			if (rightLeaf) {
-				leaf = rightLeaf;
-				await leaf.setViewState({
-					type: HISTORY_VIEW_TYPE,
-					active: true,
-				});
-			} else { return; }
-		}
-		workspace.revealLeaf(leaf);
 	}
 
 	async loadSettings() {

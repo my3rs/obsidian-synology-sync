@@ -6,7 +6,7 @@ export default {
 	'command.runQuick': 'Run Synology Sync (Quick)',
 	'command.runFull': 'Run Synology Sync (Full)',
 	'command.showLog': 'Show Sync Logs',
-	'command.showHistory': 'Show Synology Version History',
+
 
 	'notice.noActiveFile': 'No active file selected',
 	'notice.loginRequired': 'Please login to Synology Drive in settings first',
@@ -22,6 +22,7 @@ export default {
 	'status.standbyWithTime': 'NAS: Standby ({{time}})',
 	'status.syncing': 'NAS: Syncing...',
 	'status.synced': 'NAS: Synced',
+	'status.upToDate': 'NAS: Up to date',
 	'status.error': 'NAS: Error',
 	'status.forceUploading': 'NAS: Force Uploading...',
 	'status.forceDownloading': 'NAS: Force Downloading...',
@@ -80,18 +81,5 @@ export default {
 	'ui.logModal.title': 'Synology Sync Logs',
 	'ui.logModal.empty': 'No sync logs available yet.',
 
-	// ui/history-view.ts
-	'view.history.title': 'Synology Version History',
-	'view.history.noActiveFile': 'Please open a file to view its version history.',
-	'view.history.fileNotOnRemote': 'This file has not been synced to the NAS, no history available.',
-	'view.history.noRevisions': 'No history revisions found on the NAS.',
-	'view.history.loadFailed': 'Failed to load history',
-	'view.history.btnRestore': 'Restore',
-	'view.history.btnSaveCopy': 'Save Copy',
-	'view.history.restoring': 'Restoring revision...',
-	'view.history.restoreSuccess': 'Restored successfully!',
-	'view.history.restoreFailed': 'Restore failed',
-	'view.history.downloading': 'Downloading copy...',
-	'view.history.saveCopySuccess': 'Saved as copy',
-	'view.history.saveCopyFailed': 'Failed to save copy',
+
 };
