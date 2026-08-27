@@ -132,8 +132,13 @@ export class SynologyClient {
 	async getMetadata(path: string): Promise<any> {
 		const endpoint = '/api/SynologyDrive/default/v2/files';
 		const params = { path };
-		const res = await this.request(endpoint, params, 'GET');
-		return res.json;
+		try {
+			const res = await this.request(endpoint, params, 'GET');
+			return res.json;
+		} catch (e: any) {
+			if (e.message.includes('1003')) return null;
+			throw e;
+		}
 	}
 
 	/**
@@ -337,4 +342,65 @@ export class SynologyClient {
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		return res.json;
 	}
+	/**
+	 * 获取文件历史版本列表
+	 */
+	async getFileRevisions(fileId: string): Promise<any[]> {
+		const endpoint = '/webapi/entry.cgi';
+		const params = {
+			api: 'SYNO.SynologyDrive.Revisions',
+			version: 1,
+			method: 'list',
+			file_id: fileId
+		};
+		const res = await this.request(endpoint, params, 'POST', 'application/x-www-form-urlencoded');
+		if (res.json && res.json.success && res.json.data && res.json.data.revisions) {
+			return res.json.data.revisions;
+		}
+		return [];
+	}
+
+	/**
+	 * 下载指定历史版本
+	 */
+	async downloadRevision(fileId: string, revisionId: string): Promise<ArrayBuffer> {
+		const endpoint = '/webapi/entry.cgi';
+		const url = new URL(this.baseUrl + endpoint);
+		url.searchParams.append('api', 'SYNO.SynologyDrive.Revisions');
+		url.searchParams.append('version', '1');
+		url.searchParams.append('method', 'download');
+		url.searchParams.append('file_id', fileId.toString());
+		url.searchParams.append('revision_id', revisionId.toString());
+		if (this.sid) url.searchParams.append('_sid', this.sid);
+
+		let req: any = {
+			url: url.toString(),
+			method: 'GET',
+			headers: { 'Accept': '*/*' },
+			throw: false
+		};
+		if (this.sid) req.headers['Cookie'] = `id=${this.sid};`;
+
+		const res = await (window as any).reqUrl ? await (window as any).reqUrl(req) : await import('obsidian').then(m => m.requestUrl(req));
+		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${res.text}`);
+		return res.arrayBuffer;
+	}
+
+	/**
+	 * 在远程将文件恢复到指定历史版本
+	 */
+	async restoreRevision(fileId: string, revisionId: string): Promise<any> {
+		const endpoint = '/webapi/entry.cgi';
+		const params = {
+			api: 'SYNO.SynologyDrive.Revisions',
+			version: 1,
+			method: 'restore',
+			file_id: fileId,
+			revision_id: revisionId
+		};
+		
+		const res = await this.request(endpoint, params, 'POST', 'application/x-www-form-urlencoded');
+		return res.json;
+	}
+
 }
