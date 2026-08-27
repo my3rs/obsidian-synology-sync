@@ -25,15 +25,15 @@ export class SyncState {
         try {
             if (await this.app.vault.adapter.exists(this.path)) {
                 const content = await this.app.vault.adapter.read(this.path);
-                const parsed = JSON.parse(content);
+                const parsed = JSON.parse(content) as Partial<SyncDataRoot> | Record<string, FileSyncState>;
                 // 兼容旧版本或空文件
-                if (parsed && typeof parsed.lastSyncTime === 'number') {
-                    this.data = parsed;
+                if (parsed && 'lastSyncTime' in parsed && typeof parsed.lastSyncTime === 'number') {
+                    this.data = parsed as SyncDataRoot;
                 } else {
-                    this.data = { lastSyncTime: 0, files: parsed || {} };
+                    this.data = { lastSyncTime: 0, files: (parsed as Record<string, FileSyncState>) || {} };
                 }
             }
-        } catch (e) {
+        } catch (e: unknown) {
             console.error("Failed to load sync state", e);
             this.data = { lastSyncTime: 0, files: {} };
         }
@@ -42,7 +42,7 @@ export class SyncState {
     async save() {
         try {
             await this.app.vault.adapter.write(this.path, JSON.stringify(this.data));
-        } catch (e) {
+        } catch (e: unknown) {
             console.error("Failed to save sync state", e);
         }
     }

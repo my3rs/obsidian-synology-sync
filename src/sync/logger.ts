@@ -1,4 +1,4 @@
-import { App, arrayBufferToBase64 } from 'obsidian';
+import { App } from 'obsidian';
 
 export interface LogEntry {
     time: number;
@@ -18,11 +18,7 @@ export class SyncLogger {
 
     async addLog(entry: Omit<LogEntry, 'time'>) {
         this.buffer.push({ ...entry, time: Date.now() });
-        if (entry.details) {
-            console.log(`[SynologySync] ${entry.action}: ${entry.file} - ${entry.details}`);
-        } else {
-            console.log(`[SynologySync] ${entry.action}: ${entry.file}`);
-        }
+        // logs are only saved to file
     }
 
     /**
@@ -45,8 +41,8 @@ export class SyncLogger {
         if (await this.app.vault.adapter.exists(this.logPath)) {
             try {
                 const content = await this.app.vault.adapter.read(this.logPath);
-                return JSON.parse(content) || [];
-            } catch (e) {
+                return (JSON.parse(content) as LogEntry[]) || [];
+            } catch (e: unknown) {
                 return [];
             }
         }

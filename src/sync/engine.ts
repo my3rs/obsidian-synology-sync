@@ -1,6 +1,6 @@
-import { App, TFile, Notice, arrayBufferToBase64 } from 'obsidian';
+import { App, TFile, Notice } from 'obsidian';
 import { SynologyClient } from '../api/client';
-import { SyncState, FileSyncState } from './state';
+import { SyncState } from './state';
 import { calculateSHA256 } from './utils';
 import { LocalFS } from '../fs/local';
 import { SyncLogger } from './logger';
@@ -13,6 +13,16 @@ export interface SyncPlan {
     deletionsRemote: Set<string>;
     conflicts: Set<string>;
 }
+
+interface SynologyResponse {
+    data?: {
+        hash?: string;
+        file?: { hash?: string };
+        files?: Array<{ path: string; hash: string; type: string }>;
+    };
+    hash?: string;
+}
+
 
 export class SyncEngine {
     private localFs: LocalFS;
@@ -86,15 +96,16 @@ export class SyncEngine {
             
             if (notice) {
                 notice.setMessage(hasChanges ? t('notice.engine.syncSuccess') : t('notice.engine.syncUpToDate'));
-                setTimeout(() => notice?.hide(), 3000);
+                window.setTimeout(() => notice?.hide(), 3000);
             }
             
             return hasChanges;
-        } catch (e: any) {
+        } catch (e: unknown) {
+            const errorMsg = e instanceof Error ? e.message : String(e);
             console.error('Sync Error', e);
             if (notice) {
-                notice.setMessage(t('notice.syncException', { error: e.message }));
-                setTimeout(() => notice?.hide(), 5000);
+                notice.setMessage(t('notice.syncException', { error: errorMsg }));
+                window.setTimeout(() => notice?.hide(), 5000);
             }
             throw e;
         } finally {
@@ -154,7 +165,7 @@ export class SyncEngine {
 
         for (const file of allFiles) {
             // 默认忽略 .obsidian 配置文件夹，避免配置冲突
-            if (file.path.startsWith('.obsidian/')) continue;
+            if (file.path.startsWith(this.app.vault.configDir + '/')) continue;
             
             currentPaths.add(file.path);
             
@@ -202,23 +213,23 @@ export class SyncEngine {
         }
 
         // 1. 增量获取被修改的文件
-        const filesRes = await this.client.search(this.remoteFolder, 'file', lastSyncTime);
+        const filesRes = await this.client.search(this.remoteFolder, 'file', lastSyncTime) as SynologyResponse;
         if (filesRes?.data?.files) {
             for (const item of filesRes.data.files) {
                 const localPath = this.toLocalPath(item.path);
-                if (localPath.startsWith('.obsidian/')) continue;
+                if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
                 this.remoteChanges.set(localPath, { hash: item.hash });
             }
         }
 
         // 2. 增量获取发生结构变动（内部删减过文件）的文件夹，以抓取被删除的文件
-        const foldersRes = await this.client.search(this.remoteFolder, 'folder', lastSyncTime);
+        const foldersRes = await this.client.search(this.remoteFolder, 'folder', lastSyncTime) as SynologyResponse;
         if (foldersRes?.data?.files) {
             for (const folder of foldersRes.data.files) {
                 const folderLocal = this.toLocalPath(folder.path);
                 
                 // 对变动过的文件夹进行一次 listFiles，看看少了谁
-                const listRes = await this.client.listFiles(folder.path);
+                const listRes = await this.client.listFiles(folder.path) as SynologyResponse;
                 const currentFiles = new Set<string>();
                 if (listRes?.data?.files) {
                     for (const f of listRes.data.files) {
@@ -243,24 +254,25 @@ export class SyncEngine {
 
     private async fullRemoteScan(remotePath: string) {
         try {
-            const res = await this.client.listFiles(remotePath);
+            const res = await this.client.listFiles(remotePath) as SynologyResponse;
             if (res?.data?.files) {
                 for (const f of res.data.files) {
                     if (f.type === 'file') {
                         const localPath = this.toLocalPath(f.path);
-                        if (localPath.startsWith('.obsidian/')) continue;
+                        if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
                         this.remoteChanges.set(localPath, { hash: f.hash });
                     } else if (f.type === 'folder') {
                         await this.fullRemoteScan(f.path);
                     }
                 }
             }
-        } catch (e: any) {
+        } catch (e: unknown) {
             // 如果根目录不存在 (刚安装)，listFiles 会报错 404
             // 我们可以在第一次捕获并静默，让后续逻辑去创建
             if (remotePath === this.remoteFolder) {
-                console.warn("Remote root directory does not exist, will create automatically", e.message);
-                try { await this.client.createFolder(this.remoteFolder); } catch (e) {}
+                const errorMsg = e instanceof Error ? e.message : String(e);
+                console.warn("Remote root directory does not exist, will create automatically", errorMsg);
+                try { await this.client.createFolder(this.remoteFolder); } catch (_e) { /* ignore */ }
             } else {
                 throw e;
             }
@@ -320,7 +332,7 @@ export class SyncEngine {
         const allFiles = this.app.vault.getFiles();
         const currentPaths = new Set<string>();
         for (const file of allFiles) {
-            if (file.path.startsWith('.obsidian/')) continue;
+            if (file.path.startsWith(this.app.vault.configDir + '/')) continue;
             plan.uploads.add(file.path);
             currentPaths.add(file.path);
         }
@@ -342,7 +354,7 @@ export class SyncEngine {
         }
         const allFiles = this.app.vault.getFiles();
         for (const file of allFiles) {
-            if (file.path.startsWith('.obsidian/')) continue;
+            if (file.path.startsWith(this.app.vault.configDir + '/')) continue;
             if (!this.remoteChanges.has(file.path)) {
                 plan.deletionsLocal.add(file.path);
             }
@@ -375,32 +387,34 @@ export class SyncEngine {
                     });
                     await this.state.save();
                     await this.logger.addLog({ action: 'Upload', file: path });
-                } catch (e: any) {
+                } catch (e: unknown) {
+                    const errorMsg = e instanceof Error ? e.message : String(e);
                     console.error(`[SynologySync] Error uploading file ${path}:`, e);
-                    await this.logger.addLog({ action: 'Error', file: path, details: e.message });
+                    await this.logger.addLog({ action: 'Error', file: path, details: errorMsg });
                 }
             }
         }
 
-        // 2. Downloads
         for (const path of downloads) {
             const buffer = await this.client.downloadFile(this.toRemotePath(path));
             await this.localFs.write(path, buffer);
             
-            const file = this.app.vault.getAbstractFileByPath(path) as TFile;
-            const localHash = await calculateSHA256(buffer);
-            this.state.updateFileState(path, {
-                local_mtime: file.stat.mtime,
-                local_hash: localHash,
-                remote_hash: this.remoteChanges.get(path)!.hash
-            });
-            await this.state.save();
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (file instanceof TFile) {
+                const localHash = await calculateSHA256(buffer);
+                this.state.updateFileState(path, {
+                    local_mtime: file.stat.mtime,
+                    local_hash: localHash,
+                    remote_hash: this.remoteChanges.get(path)!.hash
+                });
+                await this.state.save();
+            }
             await this.logger.addLog({ action: 'Download', file: path });
         }
 
         // 3. Deletions (Remote)
         for (const path of deletionsRemote) {
-            try { await this.client.deleteFile(this.toRemotePath(path)); } catch(e) {}
+            try { await this.client.deleteFile(this.toRemotePath(path)); } catch(_e) { /* ignore */ }
             this.state.removeFileState(path);
             await this.state.save();
             await this.logger.addLog({ action: 'Delete Remote', file: path });
@@ -444,9 +458,10 @@ export class SyncEngine {
                     });
                     await this.state.save();
                     await this.logger.addLog({ action: 'Conflict', file: path, details: `Keep local, save copy as ${conflictPath}` });
-                } catch (e: any) {
+                } catch (e: unknown) {
+                    const errorMsg = e instanceof Error ? e.message : String(e);
                     console.error(`[SynologySync] Error uploading conflict file ${path}:`, e);
-                    await this.logger.addLog({ action: 'Error', file: path, details: e.message });
+                    await this.logger.addLog({ action: 'Error', file: path, details: errorMsg });
                 }
             }
         }
@@ -460,13 +475,14 @@ export class SyncEngine {
                 if (buffer) {
                     await this.client.uploadFile(this.toRemotePath('.sync_history.json'), buffer);
                 }
-            } catch (e: any) {
+            } catch (e: unknown) {
                 console.warn("Failed to upload .sync_history.json", e);
             }
         }
     }
 
-    private extractHash(obj: any): string {
+    private extractHash(inputObj: unknown): string {
+        const obj = inputObj as SynologyResponse;
         if (!obj) return '';
         if (typeof obj.hash === 'string') return obj.hash;
         if (obj.data) {

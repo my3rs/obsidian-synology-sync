@@ -1,4 +1,4 @@
-import { App, TFile, TFolder } from 'obsidian';
+import { App, TFile } from 'obsidian';
 
 export class LocalFS {
 	private app: App;
@@ -41,7 +41,7 @@ export class LocalFS {
 	async delete(path: string): Promise<void> {
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (file) {
-			await this.app.vault.trash(file, true);
+			await this.app.fileManager.trashFile(file);
 		}
 	}
 
