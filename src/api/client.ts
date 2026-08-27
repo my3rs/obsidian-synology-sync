@@ -1,5 +1,11 @@
 import { requestUrl, RequestUrlParam, RequestUrlResponse } from 'obsidian';
 
+interface ApiResponse {
+	success?: boolean;
+	error?: { code?: number | string };
+	data?: Record<string, unknown>;
+}
+
 export class SynologyClient {
 	private baseUrl: string;
 	private username: string;
@@ -19,7 +25,7 @@ export class SynologyClient {
 	 * 安全请求包装，修复 64 位整形 js 解析精度丢失问题
 	 */
 	private async safeRequestUrl(req: RequestUrlParam): Promise<RequestUrlResponse> {
-		const res: any = await requestUrl(req);
+		const res = await requestUrl(req);
 		if (res.text && typeof res.text === 'string') {
 			try {
 				const patchedText = res.text
@@ -27,9 +33,9 @@ export class SynologyClient {
 					.replace(/"id"\s*:\s*(\d+)/g, '"id":"$1"')
 					.replace(/"revision_id"\s*:\s*(\d+)/g, '"revision_id":"$1"');
 				Object.defineProperty(res, 'json', { value: JSON.parse(patchedText), writable: true, configurable: true });
-			} catch (e) {}
+			} catch (_e: unknown) { /* ignore */ }
 		}
-		return res as RequestUrlResponse;
+		return res;
 	}
 
 	/**
@@ -37,7 +43,7 @@ export class SynologyClient {
 	 */
 	private async request(
 		endpoint: string,
-		params: any,
+		params: unknown,
 		method: 'GET' | 'POST' = 'GET',
 		contentType: string = 'application/json'
 	): Promise<RequestUrlResponse> {
@@ -59,7 +65,7 @@ export class SynologyClient {
 		}
 
 		if (method === 'GET') {
-			Object.entries(params).forEach(([key, value]) => {
+			Object.entries(params as Record<string, unknown>).forEach(([key, value]) => {
 				url.searchParams.append(key, value as string);
 			});
 			req.url = url.toString();
@@ -70,7 +76,7 @@ export class SynologyClient {
 				req.body = JSON.stringify(params);
 			} else if (contentType === 'application/x-www-form-urlencoded') {
 				const formParams = new URLSearchParams();
-				Object.entries(params).forEach(([key, value]) => {
+				Object.entries(params as Record<string, unknown>).forEach(([key, value]) => {
 					formParams.append(key, value as string);
 				});
 				req.body = formParams.toString();
@@ -81,17 +87,19 @@ export class SynologyClient {
 		if (res.status >= 400) {
 			let errorDetail = '';
 			try {
-				if (res.json && res.json.error) {
-					errorDetail = `API Error Code: ${res.json.error.code}`;
+				const json = res.json as ApiResponse;
+				if (json && json.error) {
+					errorDetail = `API Error Code: ${json.error.code}`;
 				} else {
 					errorDetail = res.text;
 				}
-			} catch(e) {}
+			} catch(_e: unknown) { /* ignore */ }
 			throw new Error(`HTTP ${res.status}: ${errorDetail}`);
 		}
 		
-		if (res.json && res.json.success === false) {
-			const code = res.json.error?.code || 'Unknown';
+		const json = res.json as ApiResponse;
+		if (json && json.success === false) {
+			const code = json.error?.code || 'Unknown';
 			throw new Error(`API Error Code: ${code}`);
 		}
 		
@@ -107,7 +115,7 @@ export class SynologyClient {
 		}
 
 		const endpoint = '/api/SynologyDrive/default/v2/login';
-		const payload: any = {
+		const payload: Record<string, string> = {
 			format: 'sid',
 			account: this.username,
 			passwd: this.password
@@ -117,21 +125,21 @@ export class SynologyClient {
 			payload.otp_code = this.otpCode;
 		}
 
-		console.log(`[SynologyClient] 正在登录: ${this.baseUrl}`);
+		
 		
 		try {
 			const res = await this.request(endpoint, payload, 'POST', 'application/json');
-			const result = res.json;
+			const result = res.json as { success?: boolean; data?: { sid?: string }; error?: { code?: string | number } };
 
 			if (result && result.success) {
-				this.sid = result.data.sid;
+				this.sid = result.data?.sid;
 				return this.sid as string;
 			} else {
 				throw new Error(result?.error?.code ? `Error Code: ${result.error.code}` : "登录失败，请检查账号密码");
 			}
-		} catch (error: any) {
-			console.error("[SynologyClient] 登录异常", error);
-			throw new Error(error.message || "请求异常，请检查 NAS 地址是否可达");
+		} catch (error: unknown) {
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			throw new Error(errorMsg || "请求异常，请检查 NAS 地址是否可达");
 		}
 	}
 
@@ -146,14 +154,15 @@ export class SynologyClient {
 	/**
 	 * 获取文件或目录的元数据
 	 */
-	async getMetadata(path: string): Promise<any> {
+	async getMetadata(path: string): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files';
 		const params = { path };
 		try {
 			const res = await this.request(endpoint, params, 'GET');
 			return res.json;
-		} catch (e: any) {
-			if (e.message.includes('1003')) return null;
+		} catch (e: unknown) {
+			const errorMsg = e instanceof Error ? e.message : String(e);
+			if (errorMsg.includes('1003')) return null;
 			throw e;
 		}
 	}
@@ -161,7 +170,7 @@ export class SynologyClient {
 	/**
 	 * 列出目录下的文件和文件夹
 	 */
-	async listFiles(path: string): Promise<any> {
+	async listFiles(path: string): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/list';
 		const url = new URL(this.baseUrl + endpoint);
 		url.searchParams.append('path', path);
@@ -187,7 +196,7 @@ export class SynologyClient {
 	/**
 	 * 创建文件夹
 	 */
-	async createFolder(path: string): Promise<any> {
+	async createFolder(path: string): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files';
 		const url = new URL(this.baseUrl + endpoint);
 		url.searchParams.append('type', 'folder');
@@ -210,8 +219,9 @@ export class SynologyClient {
 		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		
-		if (res.json && res.json.success === false) {
-			const code = res.json.error?.code || 'Unknown';
+		const json = res.json as ApiResponse;
+		if (json && json.success === false) {
+			const code = json.error?.code || 'Unknown';
 			throw new Error(`API Error Code: ${code}`);
 		}
 		
@@ -231,7 +241,7 @@ export class SynologyClient {
 			}
 			try {
 				await this.createFolder(current);
-			} catch (e: any) {
+			} catch (_e: unknown) {
 				// Ignore errors, if it truly fails, the subsequent upload will fail anyway
 			}
 		}
@@ -240,7 +250,7 @@ export class SynologyClient {
 	/**
 	 * 创建或覆盖文件 (通过 multipart/form-data 上传，支持大文件)
 	 */
-	async uploadFile(path: string, buffer: ArrayBuffer, isRetry: boolean = false): Promise<any> {
+	async uploadFile(path: string, buffer: ArrayBuffer, isRetry: boolean = false): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/upload';
 		const url = new URL(this.baseUrl + endpoint);
 		
@@ -290,8 +300,9 @@ export class SynologyClient {
 		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		
-		if (res.json && res.json.success === false) {
-			const code = res.json.error?.code;
+		const json = res.json as ApiResponse;
+		if (json && json.success === false) {
+			const code = json.error?.code;
 			if (code === 1000 && !isRetry) {
 				const parentPath = path.substring(0, path.lastIndexOf('/'));
 				if (parentPath && parentPath !== '/mydrive' && parentPath !== '') {
@@ -318,7 +329,7 @@ export class SynologyClient {
 	/**
 	 * 删除文件或目录
 	 */
-	async deleteFile(path: string): Promise<any> {
+	async deleteFile(path: string): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/delete';
 		const res = await this.request(endpoint, { files: [path], permanent: false }, 'POST', 'application/json');
 		return res.json;
@@ -327,7 +338,7 @@ export class SynologyClient {
 	/**
 	 * 搜索自 start_date (Unix 时间戳，秒) 以来被修改过的文件或文件夹
 	 */
-	async search(location: string, fileType: 'file' | 'folder', startDateUnix?: number): Promise<any> {
+	async search(location: string, fileType: 'file' | 'folder', startDateUnix?: number): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/search';
 		const url = new URL(this.baseUrl + endpoint);
 		if (this.sid) url.searchParams.append('_sid', this.sid);
@@ -343,7 +354,7 @@ export class SynologyClient {
 		};
 		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
 		
-		const body: any = {
+		const body: Record<string, unknown> = {
 			location: location,
 			file_type: fileType,
 			limit: 5000 // 调高单页上限，若不够后续可结合 offset 分页
