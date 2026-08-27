@@ -16,6 +16,23 @@ export class SynologyClient {
 	}
 
 	/**
+	 * 安全请求包装，修复 64 位整形 js 解析精度丢失问题
+	 */
+	private async safeRequestUrl(req: RequestUrlParam): Promise<RequestUrlResponse> {
+		const res: any = await requestUrl(req);
+		if (res.text && typeof res.text === 'string') {
+			try {
+				const patchedText = res.text
+					.replace(/"file_id"\s*:\s*(\d+)/g, '"file_id":"$1"')
+					.replace(/"id"\s*:\s*(\d+)/g, '"id":"$1"')
+					.replace(/"revision_id"\s*:\s*(\d+)/g, '"revision_id":"$1"');
+				Object.defineProperty(res, 'json', { value: JSON.parse(patchedText), writable: true, configurable: true });
+			} catch (e) {}
+		}
+		return res as RequestUrlResponse;
+	}
+
+	/**
 	 * 通用的请求封装
 	 */
 	private async request(
@@ -60,7 +77,7 @@ export class SynologyClient {
 			}
 		}
 
-		const res = await requestUrl(req);
+		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) {
 			let errorDetail = '';
 			try {
@@ -162,7 +179,7 @@ export class SynologyClient {
 		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
 		req.body = "{}"; // 没有额外的 body
 
-		const res = await requestUrl(req);
+		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		return res.json;
 	}
@@ -190,7 +207,7 @@ export class SynologyClient {
 		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
 		req.body = "{}"; // 创建文件夹不需要 body
 
-		const res = await requestUrl(req);
+		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		
 		if (res.json && res.json.success === false) {
@@ -270,7 +287,7 @@ export class SynologyClient {
 		};
 		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
 
-		const res = await requestUrl(req);
+		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		
 		if (res.json && res.json.success === false) {
@@ -338,69 +355,10 @@ export class SynologyClient {
 		
 		req.body = JSON.stringify(body);
 
-		const res = await requestUrl(req);
+		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		return res.json;
 	}
-	/**
-	 * 获取文件历史版本列表
-	 */
-	async getFileRevisions(fileId: string): Promise<any[]> {
-		const endpoint = '/webapi/entry.cgi';
-		const params = {
-			api: 'SYNO.SynologyDrive.Revisions',
-			version: 1,
-			method: 'list',
-			file_id: fileId
-		};
-		const res = await this.request(endpoint, params, 'POST', 'application/x-www-form-urlencoded');
-		if (res.json && res.json.success && res.json.data && res.json.data.revisions) {
-			return res.json.data.revisions;
-		}
-		return [];
-	}
 
-	/**
-	 * 下载指定历史版本
-	 */
-	async downloadRevision(fileId: string, revisionId: string): Promise<ArrayBuffer> {
-		const endpoint = '/webapi/entry.cgi';
-		const url = new URL(this.baseUrl + endpoint);
-		url.searchParams.append('api', 'SYNO.SynologyDrive.Revisions');
-		url.searchParams.append('version', '1');
-		url.searchParams.append('method', 'download');
-		url.searchParams.append('file_id', fileId.toString());
-		url.searchParams.append('revision_id', revisionId.toString());
-		if (this.sid) url.searchParams.append('_sid', this.sid);
-
-		let req: any = {
-			url: url.toString(),
-			method: 'GET',
-			headers: { 'Accept': '*/*' },
-			throw: false
-		};
-		if (this.sid) req.headers['Cookie'] = `id=${this.sid};`;
-
-		const res = await (window as any).reqUrl ? await (window as any).reqUrl(req) : await import('obsidian').then(m => m.requestUrl(req));
-		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${res.text}`);
-		return res.arrayBuffer;
-	}
-
-	/**
-	 * 在远程将文件恢复到指定历史版本
-	 */
-	async restoreRevision(fileId: string, revisionId: string): Promise<any> {
-		const endpoint = '/webapi/entry.cgi';
-		const params = {
-			api: 'SYNO.SynologyDrive.Revisions',
-			version: 1,
-			method: 'restore',
-			file_id: fileId,
-			revision_id: revisionId
-		};
-		
-		const res = await this.request(endpoint, params, 'POST', 'application/x-www-form-urlencoded');
-		return res.json;
-	}
 
 }
