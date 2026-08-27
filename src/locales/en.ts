@@ -18,11 +18,9 @@ export default {
 	'notice.downloadSuccess': 'Download & Overwrite success!',
 	'notice.downloadFailed': 'Download failed: {{error}}',
 	
-	'status.standby': 'NAS: Standby',
-	'status.standbyWithTime': 'NAS: Standby ({{time}})',
+	'status.standby': 'Click to sync',
+	'status.standbyWithTime': 'Last synced: {{time}}',
 	'status.syncing': 'NAS: Syncing...',
-	'status.synced': 'NAS: Synced',
-	'status.upToDate': 'NAS: Up to date',
 	'status.error': 'NAS: Error',
 	'status.forceUploading': 'NAS: Force Uploading...',
 	'status.forceDownloading': 'NAS: Force Downloading...',

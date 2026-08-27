@@ -1,3 +1,4 @@
+import { getLanguage } from 'obsidian';
 import en from './en';
 import zhCN from './zh-cn';
 
@@ -8,10 +9,10 @@ const localeMap: Record<string, Record<string, string>> = {
 };
 
 export function t(key: keyof typeof en, vars?: Record<string, string>): string {
-	const lang = window.localStorage.getItem('language') || 'en';
+	const lang = getLanguage() || 'en';
 	const dict = localeMap[lang] || localeMap['en'];
 	
-	let text = (dict && dict[key]) || en[key] || key as string;
+	let text = (dict && dict[key]) || en[key] || key;
 	
 	if (vars) {
 		for (const [k, v] of Object.entries(vars)) {

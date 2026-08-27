@@ -19,11 +19,9 @@ export default {
 	'notice.downloadSuccess': '下载并覆盖成功!',
 	'notice.downloadFailed': '下载失败: {{error}}',
 	
-	'status.standby': 'NAS: 待命',
-	'status.standbyWithTime': 'NAS: 待命 ({{time}})',
+	'status.standby': '点击同步',
+	'status.standbyWithTime': '上次同步: {{time}}',
 	'status.syncing': 'NAS: 同步中...',
-	'status.synced': 'NAS: 已同步',
-	'status.upToDate': 'NAS: 已是最新',
 	'status.error': 'NAS: 错误',
 	'status.forceUploading': 'NAS: 强制上传中...',
 	'status.forceDownloading': 'NAS: 强制下载中...',
