@@ -272,7 +272,7 @@ export class SyncEngine {
             if (remotePath === this.remoteFolder) {
                 const errorMsg = e instanceof Error ? e.message : String(e);
                 console.warn("Remote root directory does not exist, will create automatically", errorMsg);
-                try { await this.client.createFolder(this.remoteFolder); } catch (_e) { /* ignore */ }
+                try { await this.client.createFolder(this.remoteFolder); } catch { /* ignore */ }
             } else {
                 throw e;
             }
@@ -414,7 +414,7 @@ export class SyncEngine {
 
         // 3. Deletions (Remote)
         for (const path of deletionsRemote) {
-            try { await this.client.deleteFile(this.toRemotePath(path)); } catch(_e) { /* ignore */ }
+            try { await this.client.deleteFile(this.toRemotePath(path)); } catch { /* ignore */ }
             this.state.removeFileState(path);
             await this.state.save();
             await this.logger.addLog({ action: 'Delete Remote', file: path });

@@ -42,7 +42,7 @@ export class SyncLogger {
             try {
                 const content = await this.app.vault.adapter.read(this.logPath);
                 return (JSON.parse(content) as LogEntry[]) || [];
-            } catch (e: unknown) {
+            } catch {
                 return [];
             }
         }

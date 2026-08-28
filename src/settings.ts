@@ -130,7 +130,7 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			.setDesc(t('settings.syncFolder.desc'))
 			.addText((text) =>
 				text
-					.setPlaceholder('/ObsidianSync')
+					.setPlaceholder('/obsidiansync')
 					.setValue(this.plugin.settings.syncFolder)
 					.onChange(async (value) => {
 						this.plugin.settings.syncFolder = value;
