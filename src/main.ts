@@ -85,7 +85,7 @@ export default class SynologySyncPlugin extends Plugin {
 
 		// 测试命令：将当前打开的文件上传到群晖
 		this.addCommand({
-			id: 'synology-sync-upload-active',
+			id: 'upload-active',
 			name: t('command.uploadActive'),
 			callback: async () => {
 				const activeFile = this.app.workspace.getActiveFile();
@@ -136,7 +136,7 @@ export default class SynologySyncPlugin extends Plugin {
 
 		// 测试命令：从群晖下载当前路径的文件并覆盖本地
 		this.addCommand({
-			id: 'synology-sync-download-active',
+			id: 'download-active',
 			name: t('command.downloadActive'),
 			callback: async () => {
 				const activeFile = this.app.workspace.getActiveFile();
@@ -221,7 +221,7 @@ export default class SynologySyncPlugin extends Plugin {
 		
 		// 同步引擎命令
 		this.addCommand({
-			id: 'synology-sync-run',
+			id: 'run',
 			name: t('command.runQuick'),
 			callback: async () => {
 				await this.runEngineSync(false, true);
@@ -229,7 +229,7 @@ export default class SynologySyncPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'synology-sync-run-full',
+			id: 'run-full',
 			name: t('command.runFull'),
 			callback: async () => {
 				await this.runEngineSync(true, true);
@@ -237,7 +237,7 @@ export default class SynologySyncPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'synology-sync-show-log',
+			id: 'show-log',
 			name: t('command.showLog'),
 			callback: async () => {
 				const { SyncLogModal } = await import('./ui/sync-log-modal');
