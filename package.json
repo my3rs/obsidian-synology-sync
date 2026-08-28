@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "obsidian-synology-sync",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Sync your Obsidian vault with Synology NAS via WebAPI/WebDAV.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

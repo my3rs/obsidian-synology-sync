@@ -22,10 +22,32 @@ export class SynologyClient {
 	}
 
 	/**
-	 * 安全请求包装，修复 64 位整形 js 解析精度丢失问题
+	 * 安全请求包装，修复 64 位整形 js 解析精度丢失问题，内置 1~3 次请求防抖和重试
 	 */
-	private async safeRequestUrl(req: RequestUrlParam): Promise<RequestUrlResponse> {
-		const res = await requestUrl(req);
+	private async safeRequestUrl(req: RequestUrlParam, retries = 3): Promise<RequestUrlResponse> {
+		let res: RequestUrlResponse | null = null;
+		let lastErr: unknown;
+		
+		for (let i = 0; i < retries; i++) {
+			try {
+				res = await requestUrl(req);
+				// 如果遭遇速率限制或服务端错误 (5xx)，稍作等待后重试
+				if (res.status === 429 || res.status >= 500) {
+					lastErr = new Error(`HTTP ${res.status}: ${res.text}`);
+					await new Promise(r => setTimeout(r, 1000 * (i + 1))); 
+					continue;
+				}
+				break; // 常见 200 或者不可恢复的 400 会跳出，由调用方继续处理
+			} catch (e: unknown) {
+				lastErr = e;
+				await new Promise(r => setTimeout(r, 1000 * (i + 1))); 
+			}
+		}
+		
+		if (!res || (res.status === 429 || res.status >= 500)) {
+			throw lastErr || new Error("Request failed after retries");
+		}
+		
 		if (res.text && typeof res.text === 'string') {
 			try {
 				const patchedText = res.text
@@ -83,6 +105,7 @@ export class SynologyClient {
 			}
 		}
 
+		// 这里会统一校验抛出 400 以上的异常，不再由于 404/401 提供幽灵数据
 		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) {
 			let errorDetail = '';
@@ -125,8 +148,6 @@ export class SynologyClient {
 			payload.otp_code = this.otpCode;
 		}
 
-		
-		
 		try {
 			const res = await this.request(endpoint, payload, 'POST', 'application/json');
 			const result = res.json as { success?: boolean; data?: { sid?: string }; error?: { code?: string | number } };
@@ -340,36 +361,62 @@ export class SynologyClient {
 	 */
 	async search(location: string, fileType: 'file' | 'folder', startDateUnix?: number): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/search';
-		const url = new URL(this.baseUrl + endpoint);
-		if (this.sid) url.searchParams.append('_sid', this.sid);
-
-		let req: RequestUrlParam = {
-			url: url.toString(),
-			method: 'POST',
-			headers: {
-				'Accept': 'application/json',
-				'Content-Type': 'application/json'
-			},
-			throw: false
-		};
-		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
 		
-		const body: Record<string, unknown> = {
-			location: location,
-			file_type: fileType,
-			limit: 5000 // 调高单页上限，若不够后续可结合 offset 分页
-		};
-		if (startDateUnix) {
-			body.start_date = startDateUnix;
-			body.time = 'modified_time';
+		let allFiles: unknown[] = [];
+		let offset = 0;
+		const limit = 1000;
+		let hasMore = true;
+		let lastResponse: any = null;
+
+		while (hasMore) {
+			const url = new URL(this.baseUrl + endpoint);
+			if (this.sid) url.searchParams.append('_sid', this.sid);
+
+			let req: RequestUrlParam = {
+				url: url.toString(),
+				method: 'POST',
+				headers: {
+					'Accept': 'application/json',
+					'Content-Type': 'application/json'
+				},
+				throw: false
+			};
+			if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
+			
+			const body: Record<string, unknown> = {
+				location: location,
+				file_type: fileType,
+				limit: limit,
+				offset: offset
+			};
+			if (startDateUnix) {
+				body.start_date = startDateUnix;
+				body.time = 'modified_time';
+			}
+			req.body = JSON.stringify(body);
+
+			const res = await this.safeRequestUrl(req);
+			if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+			
+			const json = res.json as any;
+			lastResponse = json;
+			
+			if (json?.data?.files && Array.isArray(json.data.files)) {
+				allFiles = allFiles.concat(json.data.files);
+			}
+
+			// 如果服务端指示有下一页，或者刚好返回满 limit 的元素，就可以继续往下翻页
+			if (json?.data?.has_more === true || (json?.data?.files && json.data.files.length === limit)) {
+				offset += limit;
+			} else {
+				hasMore = false;
+			}
 		}
-		
-		req.body = JSON.stringify(body);
 
-		const res = await this.safeRequestUrl(req);
-		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
-		return res.json;
+		if (lastResponse && lastResponse.data) {
+			lastResponse.data.files = allFiles;
+		}
+		return lastResponse || { data: { files: [] } };
 	}
-
 
 }
