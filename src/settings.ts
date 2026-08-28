@@ -68,6 +68,21 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	// @ts-ignore: To support Obsidian 1.13+ setting search capabilities
+	getSettingDefinitions() {
+		return [
+			{ id: "nasUrl", name: t('settings.nasUrl.name'), description: t('settings.nasUrl.desc'), type: "text" },
+			{ id: "username", name: t('settings.username.name'), description: t('settings.username.desc'), type: "text" },
+			{ id: "password", name: t('settings.password.name'), description: t('settings.password.desc'), type: "text" },
+			{ id: "otpCode", name: t('settings.otp.name'), description: t('settings.otp.desc'), type: "text" },
+			{ id: "syncFolder", name: t('settings.syncFolder.name'), description: t('settings.syncFolder.desc'), type: "text" },
+			{ id: "testConn", name: t('settings.testConn.name'), description: this.plugin.settings.sid ? t('settings.testConn.desc.hasSid') : t('settings.testConn.desc.noSid'), type: "button" },
+			{ id: "forceUpload", name: t('settings.forceUpload.name'), description: t('settings.forceUpload.desc'), type: "button" },
+			{ id: "forceDownload", name: t('settings.forceDownload.name'), description: t('settings.forceDownload.desc'), type: "button" },
+			{ id: "rebuild", name: t('settings.rebuild.name'), description: t('settings.rebuild.desc'), type: "button" }
+		];
+	}
+
 	display(): void {
 		const { containerEl } = this;
 
@@ -117,7 +132,7 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			.setDesc(t('settings.otp.desc'))
 			.addText((text) =>
 				text
-					.setPlaceholder('123456')
+					.setPlaceholder('(Optional)')
 					.setValue(this.plugin.settings.otpCode)
 					.onChange(async (value) => {
 						this.plugin.settings.otpCode = value;

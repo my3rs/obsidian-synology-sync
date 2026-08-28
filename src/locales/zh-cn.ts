@@ -43,8 +43,8 @@ export default {
 	'settings.username.desc': '群晖账号用户名',
 	'settings.password.name': '密码',
 	'settings.password.desc': '群晖账号密码',
-	'settings.otp.name': '两步验证码 (2FA OTP)',
-	'settings.otp.desc': '验证成功后会自动清空。仅当 Session 过期或首次登录时需要。',
+	'settings.otp.name': '两步验证码 (选填)',
+	'settings.otp.desc': '如果群晖未开启双重验证，请留空。填入验证成功后会自动清空。',
 	'settings.syncFolder.name': '同步目标文件夹',
 	'settings.syncFolder.desc': '群晖上的同步目标文件夹，必须存在 (例如: /home/Drive/ObsidianSync)',
 	

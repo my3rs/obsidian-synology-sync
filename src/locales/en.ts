@@ -41,8 +41,8 @@ export default {
 	'settings.username.desc': 'Synology account username',
 	'settings.password.name': 'Password',
 	'settings.password.desc': 'Synology account password',
-	'settings.otp.name': '2FA OTP Code',
-	'settings.otp.desc': 'Cleared automatically on success. Only needed if Session expired or for first login.',
+	'settings.otp.name': '2FA OTP Code (Optional)',
+	'settings.otp.desc': 'Leave empty if 2FA is disabled on your NAS. Cleared automatically on success.',
 	'settings.syncFolder.name': 'Target Sync Folder',
 	'settings.syncFolder.desc': 'Sync target folder on NAS (must exist), e.g., /home/Drive/ObsidianSync',
 	
