@@ -35,7 +35,7 @@
 
 1. 前往本项目的 [Releases 页面](../../releases/latest) 下载最新版本的发布包（需包含 `main.js`, `manifest.json`, `styles.css` 三个文件）。
 2. 在您的 Obsidian 笔记库目录中，找到 `.obsidian/plugins/` 文件夹（如果没有则手动创建一个）。
-3. 在该目录下新建一个名为 `obsidian-synology-sync` 的文件夹。
+3. 在该目录下新建一个名为 `synology-sync` 的文件夹。
 4. 将下载的 3 个文件放入刚才新建的文件夹中。
 5. 重启 Obsidian，并在设置的“第三方插件”中启用本插件。
 

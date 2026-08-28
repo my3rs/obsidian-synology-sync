@@ -34,7 +34,7 @@ Sync your Obsidian vault with your Synology NAS via the **Official Synology Driv
 <summary>Alternative 2: Manual Installation</summary>
 
 1. Go to the [Releases](../../releases/latest) page of this repository and download the latest version files (`main.js`, `manifest.json`, and `styles.css`).
-2. Create a folder named `obsidian-synology-sync` inside your vault's `.obsidian/plugins/` directory.
+2. Create a folder named `synology-sync` inside your vault's `.obsidian/plugins/` directory.
 3. Place the downloaded files into the newly created folder.
 4. Restart Obsidian and enable the plugin in the Community Plugins settings tab.
 

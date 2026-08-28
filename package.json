@@ -1,5 +1,5 @@
 {
-	"name": "obsidian-synology-sync",
+	"name": "synology-sync",
 	"version": "0.1.0",
 	"description": "Sync your Obsidian vault with Synology NAS via WebAPI/WebDAV.",
 	"main": "main.js",
