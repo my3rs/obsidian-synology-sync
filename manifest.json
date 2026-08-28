@@ -3,7 +3,7 @@
   "name": "Synology Sync",
   "version": "0.1.0",
   "minAppVersion": "1.8.7",
-  "description": "Sync your Obsidian vault with Synology NAS via WebAPI.",
+  "description": "Sync your vault with Synology NAS via WebAPI.",
   "author": "seaHi",
   "authorUrl": "https://seahi.me",
   "fundingUrl": "https://seahi.me",
