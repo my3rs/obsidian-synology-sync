@@ -1,5 +1,7 @@
 # Obsidian Synology Sync
 
+[![Release](https://github.com/my3rs/obsidian-synology-sync/actions/workflows/release.yml/badge.svg)](https://github.com/my3rs/obsidian-synology-sync/actions/workflows/release.yml)
+
 [English](README.md)
 
 > **免责声明**：本插件是一个独立的社区开源项目，与 Synology Inc.（群晖科技）无任何隶属、资助或官方背书关系。

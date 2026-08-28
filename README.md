@@ -1,5 +1,7 @@
 # Obsidian Synology Sync
 
+[![Release](https://github.com/my3rs/obsidian-synology-sync/actions/workflows/release.yml/badge.svg)](https://github.com/my3rs/obsidian-synology-sync/actions/workflows/release.yml)
+
 [中文](README-zh.md)
 
 > **Disclaimer**: This plugin is an independent community project and is not affiliated with, funded, or endorsed by Synology Inc.
