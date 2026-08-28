@@ -34,18 +34,19 @@ export class SynologyClient {
 				// 如果遭遇速率限制或服务端错误 (5xx)，稍作等待后重试
 				if (res.status === 429 || res.status >= 500) {
 					lastErr = new Error(`HTTP ${res.status}: ${res.text}`);
-					await new Promise(r => setTimeout(r, 1000 * (i + 1))); 
+					await new Promise(r => window.setTimeout(r, 1000 * (i + 1))); 
 					continue;
 				}
 				break; // 常见 200 或者不可恢复的 400 会跳出，由调用方继续处理
 			} catch (e: unknown) {
 				lastErr = e;
-				await new Promise(r => setTimeout(r, 1000 * (i + 1))); 
+				await new Promise(r => window.setTimeout(r, 1000 * (i + 1))); 
 			}
 		}
 		
 		if (!res || (res.status === 429 || res.status >= 500)) {
-			throw lastErr || new Error("Request failed after retries");
+			const errToThrow = lastErr instanceof Error ? lastErr : new Error(String(lastErr) || "Request failed after retries");
+			throw errToThrow;
 		}
 		
 		if (res.text && typeof res.text === 'string') {
@@ -55,7 +56,7 @@ export class SynologyClient {
 					.replace(/"id"\s*:\s*(\d+)/g, '"id":"$1"')
 					.replace(/"revision_id"\s*:\s*(\d+)/g, '"revision_id":"$1"');
 				Object.defineProperty(res, 'json', { value: JSON.parse(patchedText), writable: true, configurable: true });
-			} catch (_e: unknown) { /* ignore */ }
+			} catch { /* ignore */ }
 		}
 		return res;
 	}
@@ -116,7 +117,7 @@ export class SynologyClient {
 				} else {
 					errorDetail = res.text;
 				}
-			} catch(_e: unknown) { /* ignore */ }
+			} catch { /* ignore */ }
 			throw new Error(`HTTP ${res.status}: ${errorDetail}`);
 		}
 		
@@ -262,7 +263,7 @@ export class SynologyClient {
 			}
 			try {
 				await this.createFolder(current);
-			} catch (_e: unknown) {
+			} catch {
 				// Ignore errors, if it truly fails, the subsequent upload will fail anyway
 			}
 		}
@@ -366,7 +367,15 @@ export class SynologyClient {
 		let offset = 0;
 		const limit = 1000;
 		let hasMore = true;
-		let lastResponse: any = null;
+		
+		type SearchResponse = {
+			data?: {
+				files?: unknown[];
+				has_more?: boolean;
+			}
+		};
+
+		let lastResponse: SearchResponse | null = null;
 
 		while (hasMore) {
 			const url = new URL(this.baseUrl + endpoint);
@@ -398,7 +407,7 @@ export class SynologyClient {
 			const res = await this.safeRequestUrl(req);
 			if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 			
-			const json = res.json as any;
+			const json = res.json as SearchResponse;
 			lastResponse = json;
 			
 			if (json?.data?.files && Array.isArray(json.data.files)) {
