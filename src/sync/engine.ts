@@ -223,7 +223,7 @@ export class SyncEngine {
         }
 
         // 2. 增量获取发生结构变动（内部删减过文件）的文件夹，以抓取被删除的文件
-        const foldersRes = await this.client.search(this.remoteFolder, 'folder', lastSyncTime) as SynologyResponse;
+        const foldersRes = await this.client.search(this.remoteFolder, 'dir', lastSyncTime) as SynologyResponse;
         if (foldersRes?.data?.files) {
             for (const folder of foldersRes.data.files) {
                 const folderLocal = this.toLocalPath(folder.path);
@@ -261,7 +261,7 @@ export class SyncEngine {
                         const localPath = this.toLocalPath(f.path);
                         if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
                         this.remoteChanges.set(localPath, { hash: f.hash });
-                    } else if (f.type === 'folder') {
+                    } else if (f.type === 'folder' || f.type === 'dir') {
                         await this.fullRemoteScan(f.path);
                     }
                 }

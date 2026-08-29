@@ -360,7 +360,7 @@ export class SynologyClient {
 	/**
 	 * 搜索自 start_date (Unix 时间戳，秒) 以来被修改过的文件或文件夹
 	 */
-	async search(location: string, fileType: 'file' | 'folder', startDateUnix?: number): Promise<unknown> {
+	async search(location: string, fileType: 'file' | 'folder' | 'dir', startDateUnix?: number): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/search';
 		
 		let allFiles: unknown[] = [];
