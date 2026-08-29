@@ -197,32 +197,62 @@ export class SynologyClient {
 	 */
 	async listFiles(path: string): Promise<unknown> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/list';
-		const url = new URL(this.baseUrl + endpoint);
-		url.searchParams.append('path', path);
-		if (this.sid) url.searchParams.append('_sid', this.sid);
-
-		let req: RequestUrlParam = {
-			url: url.toString(),
-			method: 'POST',
-			headers: {
-				'Accept': 'application/json',
-				'Content-Type': 'application/json'
-			},
-			throw: false
-		};
-		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
-		req.body = "{}"; // 没有额外的 body
-
-		const res = await this.safeRequestUrl(req);
-		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		
-		const json = res.json as ApiResponse;
-		if (json && json.success === false) {
-			const code = json.error?.code || 'Unknown';
-			throw new Error(`API Error Code: ${code} - ${json.error?.errors?.message || 'list node failed'}`);
+		let allFiles: unknown[] = [];
+		let offset = 0;
+		const limit = 200; // 降低 limit 避免移动端 JSON 过大被截断抛出 Parse Error
+		let hasMore = true;
+		
+		type ListResponse = ApiResponse & { data?: { items?: unknown[], has_more?: boolean } };
+		let lastResponse: ListResponse | null = null;
+
+		while (hasMore) {
+			const url = new URL(this.baseUrl + endpoint);
+			url.searchParams.append('path', path);
+			url.searchParams.append('limit', limit.toString());
+			url.searchParams.append('offset', offset.toString());
+			if (this.sid) url.searchParams.append('_sid', this.sid);
+
+			let req: RequestUrlParam = {
+				url: url.toString(),
+				method: 'POST',
+				headers: {
+					'Accept': 'application/json',
+					'Content-Type': 'application/json'
+				},
+				throw: false
+			};
+			if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
+			req.body = "{}"; // 没有额外的 body
+
+			const res = await this.safeRequestUrl(req);
+			if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+			
+			const json = res.json as ListResponse;
+			if (json && json.success === false) {
+				const code = json.error?.code || 'Unknown';
+				throw new Error(`API Error Code: ${code} - ${json.error?.errors?.message || 'list node failed'}`);
+			}
+			
+			lastResponse = json;
+			
+			if (json?.data?.items && Array.isArray(json.data.items)) {
+				allFiles.push(...json.data.items);
+			}
+			
+			if (json?.data?.has_more) {
+				hasMore = true;
+				offset += limit;
+			} else {
+				hasMore = false;
+			}
 		}
 		
-		return res.json;
+		if (lastResponse && lastResponse.data) {
+			lastResponse.data.items = allFiles;
+		}
+		
+		return lastResponse;
 	}
 
 	/**
@@ -375,7 +405,7 @@ export class SynologyClient {
 		
 		let allFiles: unknown[] = [];
 		let offset = 0;
-		const limit = 1000;
+		const limit = 200; // 降低 limit，避免移动端 JSON 截断
 		let hasMore = true;
 		
 		type SearchResponse = {
