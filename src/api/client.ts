@@ -2,7 +2,10 @@ import { requestUrl, RequestUrlParam, RequestUrlResponse } from 'obsidian';
 
 interface ApiResponse {
 	success?: boolean;
-	error?: { code?: number | string };
+	error?: { 
+		code?: number | string;
+		errors?: { message?: string; line?: number };
+	};
 	data?: Record<string, unknown>;
 }
 
@@ -213,7 +216,7 @@ export class SynologyClient {
 		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 		
-		const json = res.json as any;
+		const json = res.json as ApiResponse;
 		if (json && json.success === false) {
 			const code = json.error?.code || 'Unknown';
 			throw new Error(`API Error Code: ${code} - ${json.error?.errors?.message || 'list node failed'}`);
@@ -414,10 +417,11 @@ export class SynologyClient {
 			const res = await this.safeRequestUrl(req);
 			if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 			
-			const json = res.json as any;
+			const json = res.json as SearchResponse;
 			if (json && json.success === false) {
-				const code = json.error?.code || 'Unknown';
-				throw new Error(`API Error Code: ${code} - ${json.error?.errors?.message || 'search failed'}`);
+				const apiRes = json as ApiResponse;
+				const code = apiRes.error?.code || 'Unknown';
+				throw new Error(`API Error Code: ${code} - ${apiRes.error?.errors?.message || 'search failed'}`);
 			}
 			
 			lastResponse = json;
