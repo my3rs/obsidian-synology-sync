@@ -370,7 +370,7 @@ export class SynologyClient {
 		
 		type SearchResponse = {
 			data?: {
-				files?: unknown[];
+				items?: unknown[];
 				has_more?: boolean;
 			}
 		};
@@ -410,12 +410,12 @@ export class SynologyClient {
 			const json = res.json as SearchResponse;
 			lastResponse = json;
 			
-			if (json?.data?.files && Array.isArray(json.data.files)) {
-				allFiles = allFiles.concat(json.data.files);
+			if (json?.data?.items && Array.isArray(json.data.items)) {
+				allFiles = allFiles.concat(json.data.items);
 			}
 
 			// 如果服务端指示有下一页，或者刚好返回满 limit 的元素，就可以继续往下翻页
-			if (json?.data?.has_more === true || (json?.data?.files && json.data.files.length === limit)) {
+			if (json?.data?.has_more === true || (json?.data?.items && json.data.items.length === limit)) {
 				offset += limit;
 			} else {
 				hasMore = false;
@@ -423,9 +423,9 @@ export class SynologyClient {
 		}
 
 		if (lastResponse && lastResponse.data) {
-			lastResponse.data.files = allFiles;
+			lastResponse.data.items = allFiles;
 		}
-		return lastResponse || { data: { files: [] } };
+		return lastResponse || { data: { items: [] } };
 	}
 
 }

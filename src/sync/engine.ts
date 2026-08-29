@@ -19,6 +19,7 @@ interface SynologyResponse {
         hash?: string;
         file?: { hash?: string };
         files?: Array<{ path: string; hash: string; type: string }>;
+        items?: Array<{ path: string; hash: string; type: string }>;
     };
     hash?: string;
 }
@@ -214,8 +215,8 @@ export class SyncEngine {
 
         // 1. 增量获取被修改的文件
         const filesRes = await this.client.search(this.remoteFolder, 'file', lastSyncTime) as SynologyResponse;
-        if (filesRes?.data?.files) {
-            for (const item of filesRes.data.files) {
+        if (filesRes?.data?.items) {
+            for (const item of filesRes.data.items) {
                 const localPath = this.toLocalPath(item.path);
                 if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
                 this.remoteChanges.set(localPath, { hash: item.hash });
@@ -224,15 +225,15 @@ export class SyncEngine {
 
         // 2. 增量获取发生结构变动（内部删减过文件）的文件夹，以抓取被删除的文件
         const foldersRes = await this.client.search(this.remoteFolder, 'dir', lastSyncTime) as SynologyResponse;
-        if (foldersRes?.data?.files) {
-            for (const folder of foldersRes.data.files) {
+        if (foldersRes?.data?.items) {
+            for (const folder of foldersRes.data.items) {
                 const folderLocal = this.toLocalPath(folder.path);
                 
                 // 对变动过的文件夹进行一次 listFiles，看看少了谁
                 const listRes = await this.client.listFiles(folder.path) as SynologyResponse;
                 const currentFiles = new Set<string>();
-                if (listRes?.data?.files) {
-                    for (const f of listRes.data.files) {
+                if (listRes?.data?.items) {
+                    for (const f of listRes.data.items) {
                         if (f.type === 'file') currentFiles.add(this.toLocalPath(f.path));
                     }
                 }
@@ -255,8 +256,8 @@ export class SyncEngine {
     private async fullRemoteScan(remotePath: string) {
         try {
             const res = await this.client.listFiles(remotePath) as SynologyResponse;
-            if (res?.data?.files) {
-                for (const f of res.data.files) {
+            if (res?.data?.items) {
+                for (const f of res.data.items) {
                     if (f.type === 'file') {
                         const localPath = this.toLocalPath(f.path);
                         if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
@@ -466,18 +467,10 @@ export class SyncEngine {
             }
         }
         
-        // 收尾：如果发生过同步，保存日志并静默上传到云端
+        // 收尾：如果发生过同步，保存日志到本地磁盘
         const hasChanges = uploads.size > 0 || downloads.size > 0 || deletionsLocal.size > 0 || deletionsRemote.size > 0 || conflicts.size > 0;
         if (hasChanges) {
             await this.logger.flush();
-            try {
-                const buffer = await this.logger.getLogContentBuffer();
-                if (buffer) {
-                    await this.client.uploadFile(this.toRemotePath('.sync_history.json'), buffer);
-                }
-            } catch (e: unknown) {
-                console.warn("Failed to upload .sync_history.json", e);
-            }
         }
     }
 
