@@ -239,13 +239,14 @@ export class SyncEngine {
         }
 
         // 2. 增量获取发生结构变动（内部删减过文件）的文件夹，以抓取被删除的文件
-        const foldersRes = await this.client.search(this.remoteFolder, 'dir', lastSyncTime) as SynologyResponse;
+        const foldersRes = await this.client.search(this.remoteFolder, 'folder', lastSyncTime) as SynologyResponse;
         if (foldersRes?.data?.items) {
             for (const folder of foldersRes.data.items) {
                 const folderLocal = this.toLocalPath(folder.display_path || folder.path);
                 
                 // 对变动过的文件夹进行一次 listFiles，看看少了谁
-                const listRes = await this.client.listFiles(folder.path) as SynologyResponse;
+                const listPath = folder.display_path || folder.path;
+                const listRes = await this.client.listFiles(listPath) as SynologyResponse;
                 const currentFiles = new Set<string>();
                 if (listRes?.data?.items) {
                     for (const f of listRes.data.items) {
@@ -278,15 +279,18 @@ export class SyncEngine {
                         if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
                         this.remoteChanges.set(localPath, { hash: f.hash });
                     } else if (f.type === 'folder' || f.type === 'dir') {
-                        await this.fullRemoteScan(f.path);
+                        const nextPath = f.display_path || f.path;
+                        await this.fullRemoteScan(nextPath);
                     }
                 }
             }
         } catch (e: unknown) {
             // 如果根目录不存在 (刚安装)，listFiles 会报错 404 或特定错误码
-            // 我们可以在第一次捕获并静默，让后续逻辑去创建
-            if (remotePath === this.remoteFolder) {
-                const errorMsg = e instanceof Error ? e.message : String(e);
+            // 我们必须严格判断只有当扫描的是根目录且报错 1000 时，才去创建。
+            // 子目录的报错必须直接抛出，否则会导致扫描中断且静默忽略！
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            const isRoot = remotePath === this.remoteFolder;
+            if (isRoot && errorMsg.includes('1000')) {
                 console.warn("Remote root directory does not exist, will create automatically", errorMsg);
                 try { 
                     await this.client.createFolder(this.remoteFolder); 
@@ -375,6 +379,14 @@ export class SyncEngine {
         for (const path of this.remoteChanges.keys()) {
             plan.downloads.add(path);
         }
+        
+        // 增加空扫描保护：如果远端完全空了（且不是故意清空），防止把本地全部误删
+        // 在强制下载时，如果 remoteChanges 是空的，我们应该抛出警告或者跳过删除
+        if (this.remoteChanges.size === 0) {
+            console.warn("Remote changes is completely empty. Skipping local deletions to protect data.");
+            return plan;
+        }
+
         const allFiles = this.app.vault.getFiles();
         for (const file of allFiles) {
             if (file.path.startsWith(this.app.vault.configDir + '/')) continue;
@@ -423,10 +435,10 @@ export class SyncEngine {
             await this.localFs.write(path, buffer);
             
             const file = this.app.vault.getAbstractFileByPath(path);
-            if (file instanceof TFile) {
+            if (file && 'stat' in file) {
                 const localHash = await calculateSHA256(buffer);
                 this.state.updateFileState(path, {
-                    local_mtime: file.stat.mtime,
+                    local_mtime: (file as import("obsidian").TFile).stat.mtime,
                     local_hash: localHash,
                     remote_hash: this.remoteChanges.get(path)!.hash
                 });
