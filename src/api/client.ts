@@ -379,6 +379,7 @@ export class SynologyClient {
 		let hasMore = true;
 		
 		type SearchResponse = {
+			success?: boolean;
 			data?: {
 				items?: unknown[];
 				has_more?: boolean;
