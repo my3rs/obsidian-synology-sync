@@ -19,7 +19,7 @@ interface SynologyResponse {
         hash?: string;
         file?: { hash?: string };
         files?: Array<{ path: string; hash: string; type: string }>;
-        items?: Array<{ path: string; hash: string; type: string }>;
+        items?: Array<{ path: string; display_path?: string; hash: string; type: string }>;
     };
     hash?: string;
 }
@@ -60,11 +60,21 @@ export class SyncEngine {
             prefix = `/mydrive${prefix.startsWith('/') ? '' : '/'}${prefix}`;
         }
         prefix = prefix.replace(/\/\//g, '/');
+        
+        let prefixWithoutRoot = prefix;
+        if (prefix.startsWith('/mydrive')) prefixWithoutRoot = prefix.substring('/mydrive'.length);
+        else if (prefix.startsWith('/team-folders')) prefixWithoutRoot = prefix.substring('/team-folders'.length);
+
         if (remotePath.startsWith(prefix)) {
             let local = remotePath.substring(prefix.length);
             if (local.startsWith('/')) local = local.substring(1);
             return local;
+        } else if (remotePath.startsWith(prefixWithoutRoot)) {
+            let local = remotePath.substring(prefixWithoutRoot.length);
+            if (local.startsWith('/')) local = local.substring(1);
+            return local;
         }
+        
         return remotePath;
     }
 
@@ -217,7 +227,7 @@ export class SyncEngine {
         const filesRes = await this.client.search(this.remoteFolder, 'file', lastSyncTime) as SynologyResponse;
         if (filesRes?.data?.items) {
             for (const item of filesRes.data.items) {
-                const localPath = this.toLocalPath(item.path);
+                const localPath = this.toLocalPath(item.display_path || item.path);
                 if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
                 this.remoteChanges.set(localPath, { hash: item.hash });
             }
@@ -227,14 +237,14 @@ export class SyncEngine {
         const foldersRes = await this.client.search(this.remoteFolder, 'dir', lastSyncTime) as SynologyResponse;
         if (foldersRes?.data?.items) {
             for (const folder of foldersRes.data.items) {
-                const folderLocal = this.toLocalPath(folder.path);
+                const folderLocal = this.toLocalPath(folder.display_path || folder.path);
                 
                 // 对变动过的文件夹进行一次 listFiles，看看少了谁
                 const listRes = await this.client.listFiles(folder.path) as SynologyResponse;
                 const currentFiles = new Set<string>();
                 if (listRes?.data?.items) {
                     for (const f of listRes.data.items) {
-                        if (f.type === 'file') currentFiles.add(this.toLocalPath(f.path));
+                        if (f.type === 'file') currentFiles.add(this.toLocalPath(f.display_path || f.path));
                     }
                 }
 
@@ -259,7 +269,7 @@ export class SyncEngine {
             if (res?.data?.items) {
                 for (const f of res.data.items) {
                     if (f.type === 'file') {
-                        const localPath = this.toLocalPath(f.path);
+                        const localPath = this.toLocalPath(f.display_path || f.path);
                         if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
                         this.remoteChanges.set(localPath, { hash: f.hash });
                     } else if (f.type === 'folder' || f.type === 'dir') {
