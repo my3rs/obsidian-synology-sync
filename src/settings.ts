@@ -60,6 +60,7 @@ class ConfirmModal extends Modal {
 }
 
 
+// @ts-ignore TS2515: display() is intentionally omitted as it is deprecated in Obsidian 1.13.0+ but still required by older typings
 export class SynologySyncSettingTab extends PluginSettingTab {
 	plugin: SynologySyncPlugin;
 
@@ -239,10 +240,5 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 				}
 			}
 		];
-	}
-
-	// eslint-disable-next-line obsidianmd/settings-tab/no-deprecated-display
-	display(): void {
-		// Required by TypeScript PluginSettingTab abstract class definition
 	}
 }
