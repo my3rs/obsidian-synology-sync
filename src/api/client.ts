@@ -212,6 +212,13 @@ export class SynologyClient {
 
 		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		
+		const json = res.json as any;
+		if (json && json.success === false) {
+			const code = json.error?.code || 'Unknown';
+			throw new Error(`API Error Code: ${code} - ${json.error?.errors?.message || 'list node failed'}`);
+		}
+		
 		return res.json;
 	}
 
@@ -407,7 +414,12 @@ export class SynologyClient {
 			const res = await this.safeRequestUrl(req);
 			if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
 			
-			const json = res.json as SearchResponse;
+			const json = res.json as any;
+			if (json && json.success === false) {
+				const code = json.error?.code || 'Unknown';
+				throw new Error(`API Error Code: ${code} - ${json.error?.errors?.message || 'search failed'}`);
+			}
+			
 			lastResponse = json;
 			
 			if (json?.data?.items && Array.isArray(json.data.items)) {
