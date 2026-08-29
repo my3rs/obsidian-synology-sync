@@ -1,4 +1,4 @@
-import { App, Modal, Notice, PluginSettingTab, Setting, Platform } from 'obsidian';
+import { App, Modal, Notice, PluginSettingTab, Setting } from 'obsidian';
 import SynologySyncPlugin from './main';
 import { SynologyClient } from './api/client';
 import { t } from './locales';
@@ -173,12 +173,8 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 									new Notice(t('notice.connSuccess'));
 									
 									// 强制刷新设置界面
-									// 由于我们现在完全在 getSettingDefinitions 内部，调用 this.display() 可能不足够触发重新渲染。
-									// 对于原生的 PluginSettingTab，重绘需要调用 app.setting.openTabById 等方法，或者手动重置 containerEl。
-									// 在 Obsidian 内部，由于无法轻松直接 trigger 重新渲染 declarative list，
-									// 我们可以利用 display() 清空并重新构建（如果是兼容模式），
-									// 针对 declarative mode，我们可以在 display() 中显式清理并重新调用。
-									this.display(); 
+									// 在 Obsidian 1.13+ 的声明式设置中，调用 this.update() 即可刷新
+									(this as unknown as { update: () => void }).update();
 								} catch (err: unknown) {
 									const errorMsg = err instanceof Error ? err.message : String(err);
 									new Notice(t('notice.connFailed', { error: errorMsg }));
@@ -243,28 +239,5 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 				}
 			}
 		];
-	}
-
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
-
-		// 由于我们迁移到了声明式配置 getSettingDefinitions()
-		// 为了防止部分 Obsidian 旧版本（或某些情况下）不自动渲染，
-		// 我们在这里手动遍历 definitions 并调用 render。
-		// 如果 Obsidian 内部已经接管并自动调用了，这会作为一个保底渲染。
-		// 在 Obsidian 1.13+ 如果它原生接管，它可能会在某些视图下跳过执行自定义的 display()，
-		// 但为了保险起见，以及响应 "Test Connection" 按钮点击后的 UI 刷新，
-		// 我们可以利用 display() 手动绘制一次。
-		
-		const defs = this.getSettingDefinitions();
-		for (const def of defs) {
-			const setting = new Setting(containerEl);
-			if (def.name) setting.setName(def.name);
-			if (def.description) setting.setDesc(def.description);
-			if (def.render) {
-				def.render(setting);
-			}
-		}
 	}
 }
