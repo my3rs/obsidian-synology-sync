@@ -43,6 +43,11 @@ export class SyncEngine {
         private logger: SyncLogger,
         private remoteFolder: string // 例如 /mydrive/ObsidianSync
     ) {
+        // Normalize the remote folder to ensure it starts with a valid root (e.g. /mydrive)
+        if (!this.remoteFolder.startsWith('/mydrive/') && !this.remoteFolder.startsWith('/team-folders/')) {
+            this.remoteFolder = `/mydrive${this.remoteFolder.startsWith('/') ? '' : '/'}${this.remoteFolder}`;
+        }
+        this.remoteFolder = this.remoteFolder.replace(/\/\//g, '/');
         this.localFs = new LocalFS(app);
     }
 
@@ -278,12 +283,19 @@ export class SyncEngine {
                 }
             }
         } catch (e: unknown) {
-            // 如果根目录不存在 (刚安装)，listFiles 会报错 404
+            // 如果根目录不存在 (刚安装)，listFiles 会报错 404 或特定错误码
             // 我们可以在第一次捕获并静默，让后续逻辑去创建
             if (remotePath === this.remoteFolder) {
                 const errorMsg = e instanceof Error ? e.message : String(e);
                 console.warn("Remote root directory does not exist, will create automatically", errorMsg);
-                try { await this.client.createFolder(this.remoteFolder); } catch { /* ignore */ }
+                try { 
+                    await this.client.createFolder(this.remoteFolder); 
+                } catch { 
+                    throw e; // 如果创建也失败了，必须抛出错误阻断同步，否则会误删所有本地文件！
+                }
+                
+                // 如果创建成功了，重新扫描一次空目录以防万一
+                return;
             } else {
                 throw e;
             }
