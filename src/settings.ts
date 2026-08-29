@@ -240,4 +240,9 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 			}
 		];
 	}
+
+	// eslint-disable-next-line obsidianmd/settings-tab/no-deprecated-display
+	display(): void {
+		// Required by TypeScript PluginSettingTab abstract class definition
+	}
 }
