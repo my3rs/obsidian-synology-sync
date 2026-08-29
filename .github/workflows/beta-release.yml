@@ -1,9 +1,14 @@
-name: Release Obsidian plugin
+name: Release Beta Obsidian plugin
 
 on:
     workflow_dispatch:
+        inputs:
+            tag_name:
+                description: 'Beta Tag Name (e.g. 1.0.1-beta.1, leave empty to auto-generate)'
+                required: false
+                type: string
     push:
-        tags-ignore:
+        tags:
             - '*-beta*'
             - '*-alpha*'
             - '*-rc*'
@@ -42,13 +47,22 @@ jobs:
                       main.js
                       ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
 
-            - name: Create release
+            - name: Create Pre-release
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
-                  tag="${GITHUB_REF#refs/tags/}"
+                  if [ -n "${{ inputs.tag_name }}" ]; then
+                      tag="${{ inputs.tag_name }}"
+                  elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+                      tag="${GITHUB_REF#refs/tags/}"
+                  else
+                      version=$(node -p "require('./manifest.json').version")
+                      tag="${version}-beta.${GITHUB_RUN_NUMBER}"
+                  fi
+
+                  echo "Creating pre-release for tag: $tag"
 
                   gh release create "$tag" \
                     --title="$tag" \
-                    --draft \
+                    --prerelease \
                     main.js manifest.json ${{ steps.styles.outputs.exists == 'true' && 'styles.css' || '' }}
