@@ -148,6 +148,7 @@ Follow Obsidian's **Developer Policies** and **Plugin Guidelines**. In particula
 **Do**
 
 - **i18n check**: Every time there's a functional change involving UI text, Notice messages, or Commands, you MUST check and update the multi-language support (i18n) by modifying `src/locales/en.ts` and `src/locales/zh-cn.ts`.
+- **Synology API Error Handling**: The Synology Drive API is non-RESTful. For specific errors (e.g. path not found, permissions), it returns HTTP 200 with `{ "success": false, "error": { "code": 1000 } }`. You MUST explicitly check for `json.success === false` in all API responses to prevent silent failures.
 - Add commands with stable IDs (don't rename once released).
 - Provide defaults and validation in settings.
 - Write idempotent code paths so reload/unload doesn't leak listeners or intervals.
