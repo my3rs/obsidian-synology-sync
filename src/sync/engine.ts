@@ -415,9 +415,14 @@ export class SyncEngine {
                     const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
                     if (!rHash) console.warn(`Failed to get Hash from remote, path: ${path}`, remoteMeta);
 
+                    let localHash = this.localChanges.get(path)?.hash;
+                    if (!localHash) {
+                        localHash = await calculateSHA256(buffer);
+                    }
+
                     this.state.updateFileState(path, {
                         local_mtime: file.stat.mtime,
-                        local_hash: this.localChanges.get(path)!.hash,
+                        local_hash: localHash,
                         remote_hash: rHash
                     });
                     await this.state.save();
