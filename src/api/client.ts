@@ -27,7 +27,7 @@ export class SynologyClient {
 	/**
 	 * 安全请求包装，修复 64 位整形 js 解析精度丢失问题，内置 1~3 次请求防抖和重试
 	 */
-	private async safeRequestUrl(req: RequestUrlParam, retries = 3): Promise<RequestUrlResponse> {
+	private async safeRequestUrl(req: RequestUrlParam, retries = 3): Promise<{ status: number, text: string, json: unknown, headers: Record<string, string>, arrayBuffer: ArrayBuffer }> {
 		let res: RequestUrlResponse | null = null;
 		let lastErr: unknown;
 		
@@ -62,9 +62,13 @@ export class SynologyClient {
 				parsedJson = JSON.parse(patchedText);
 			} catch { /* ignore */ }
 		}
-		// 覆盖 Obsidian 原生的 json getter，防止读取非 JSON 内容（如下载文件、HTML 错误页）时抛出 SyntaxError
-		Object.defineProperty(res, 'json', { value: parsedJson, writable: true, configurable: true });
-		return res;
+		return {
+			status: res.status,
+			text: res.text,
+			json: parsedJson,
+			headers: res.headers,
+			arrayBuffer: res.arrayBuffer
+		};
 	}
 
 	/**
@@ -75,7 +79,7 @@ export class SynologyClient {
 		params: unknown,
 		method: 'GET' | 'POST' = 'GET',
 		contentType: string = 'application/json'
-	): Promise<RequestUrlResponse> {
+	): Promise<{ status: number, text: string, json: unknown, headers: Record<string, string>, arrayBuffer: ArrayBuffer }> {
 		const url = new URL(this.baseUrl + endpoint);
 		
 		let req: RequestUrlParam = {
