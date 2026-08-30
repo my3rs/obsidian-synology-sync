@@ -1,4 +1,4 @@
-import { App, TFile, Notice } from 'obsidian';
+import { App, TFile, TFolder, Notice } from 'obsidian';
 import { SynologyClient } from '../api/client';
 import { SyncState } from './state';
 import { calculateSHA256 } from './utils';
@@ -143,6 +143,22 @@ export class SyncEngine {
                 this.remoteChanges.clear();
                 this.remoteDeletions.clear();
             }
+
+            // 先创建所有本地目录（包括空目录），按路径层级排序确保父目录先创建
+            const localFolders = this.app.vault.getAllLoadedFiles()
+                .filter((f): f is TFolder => f instanceof TFolder && f.path !== '/' && f.path !== '')
+                .filter(f => !f.path.startsWith(this.app.vault.configDir + '/'))
+                .map(f => f.path)
+                .sort((a, b) => a.split('/').length - b.split('/').length);
+
+            for (const folderPath of localFolders) {
+                try {
+                    await this.client.createFolder(this.toRemotePath(folderPath));
+                } catch {
+                    // 目录已存在或创建失败均忽略，后续文件上传失败时会再次尝试
+                }
+            }
+
             const plan = this.compareForForceUpload();
             console.warn(`[SynologySync] 强制上传计划: 上传 ${plan.uploads.size} 个文件, 远端删除 ${plan.deletionsRemote.size} 个文件`);
             await this.executePlan(plan);
