@@ -160,7 +160,7 @@ export class SyncEngine {
             }
 
             const plan = this.compareForForceUpload();
-            console.warn(`[SynologySync] 强制上传计划: 上传 ${plan.uploads.size} 个文件, 远端删除 ${plan.deletionsRemote.size} 个文件`);
+            console.warn(`[SynologySync] 强制上传: 上传 ${plan.uploads.size} 个文件, 远端删除 ${plan.deletionsRemote.size} 个文件`);
             await this.executePlan(plan);
             this.state.setLastSyncTime(Math.floor(Date.now() / 1000));
             await this.state.save();
@@ -178,6 +178,7 @@ export class SyncEngine {
             await this.detectLocalChanges();
             await this.detectRemoteChanges(0);
             const plan = this.compareForForceDownload();
+            console.warn(`[SynologySync] 强制下载: 下载 ${plan.downloads.size} 个文件, 本地删除 ${plan.deletionsLocal.size} 个文件`);
             await this.executePlan(plan);
             this.state.setLastSyncTime(Math.floor(Date.now() / 1000));
             await this.state.save();
