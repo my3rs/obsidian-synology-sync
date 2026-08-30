@@ -52,15 +52,18 @@ export class SynologyClient {
 			throw errToThrow;
 		}
 		
+		let parsedJson: unknown = null;
 		if (res.text && typeof res.text === 'string') {
 			try {
 				const patchedText = res.text
 					.replace(/"file_id"\s*:\s*(\d+)/g, '"file_id":"$1"')
 					.replace(/"id"\s*:\s*(\d+)/g, '"id":"$1"')
 					.replace(/"revision_id"\s*:\s*(\d+)/g, '"revision_id":"$1"');
-				Object.defineProperty(res, 'json', { value: JSON.parse(patchedText), writable: true, configurable: true });
+				parsedJson = JSON.parse(patchedText);
 			} catch { /* ignore */ }
 		}
+		// 覆盖 Obsidian 原生的 json getter，防止读取非 JSON 内容（如下载文件、HTML 错误页）时抛出 SyntaxError
+		Object.defineProperty(res, 'json', { value: parsedJson, writable: true, configurable: true });
 		return res;
 	}
 
@@ -113,18 +116,16 @@ export class SynologyClient {
 		const res = await this.safeRequestUrl(req);
 		if (res.status >= 400) {
 			let errorDetail = '';
-			try {
-				const json = res.json as ApiResponse;
-				if (json && json.error) {
-					errorDetail = `API Error Code: ${json.error.code}`;
-				} else {
-					errorDetail = res.text;
-				}
-			} catch { /* ignore */ }
+			const json = res.json as ApiResponse | null;
+			if (json && json.error) {
+				errorDetail = `API Error Code: ${json.error.code}`;
+			} else {
+				errorDetail = res.text;
+			}
 			throw new Error(`HTTP ${res.status}: ${errorDetail}`);
 		}
 		
-		const json = res.json as ApiResponse;
+		const json = res.json as ApiResponse | null;
 		if (json && json.success === false) {
 			const code = json.error?.code || 'Unknown';
 			throw new Error(`API Error Code: ${code}`);
@@ -226,9 +227,13 @@ export class SynologyClient {
 			req.body = "{}"; // 没有额外的 body
 
 			const res = await this.safeRequestUrl(req);
-			if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+			if (res.status >= 400) {
+				const json = res.json as ApiResponse | null;
+				const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
+				throw new Error(`HTTP ${res.status}: ${errText}`);
+			}
 			
-			const json = res.json as ListResponse;
+			const json = res.json as ListResponse | null;
 			if (json && json.success === false) {
 				const code = json.error?.code || 'Unknown';
 				throw new Error(`API Error Code: ${code} - ${json.error?.errors?.message || 'list node failed'}`);
@@ -279,9 +284,13 @@ export class SynologyClient {
 		req.body = "{}"; // 创建文件夹不需要 body
 
 		const res = await this.safeRequestUrl(req);
-		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		if (res.status >= 400) {
+			const json = res.json as ApiResponse | null;
+			const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
+			throw new Error(`HTTP ${res.status}: ${errText}`);
+		}
 		
-		const json = res.json as ApiResponse;
+		const json = res.json as ApiResponse | null;
 		if (json && json.success === false) {
 			const code = json.error?.code || 'Unknown';
 			throw new Error(`API Error Code: ${code}`);
@@ -360,9 +369,13 @@ export class SynologyClient {
 		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
 
 		const res = await this.safeRequestUrl(req);
-		if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+		if (res.status >= 400) {
+			const json = res.json as ApiResponse | null;
+			const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
+			throw new Error(`HTTP ${res.status}: ${errText}`);
+		}
 		
-		const json = res.json as ApiResponse;
+		const json = res.json as ApiResponse | null;
 		if (json && json.success === false) {
 			const code = json.error?.code;
 			if (code === 1000 && !isRetry) {
@@ -384,7 +397,37 @@ export class SynologyClient {
 	 */
 	async downloadFile(path: string): Promise<ArrayBuffer> {
 		const endpoint = '/api/SynologyDrive/default/v2/files/download';
-		const res = await this.request(endpoint, { files: [path] }, 'POST', 'application/json');
+		const url = new URL(this.baseUrl + endpoint);
+		if (this.sid) {
+			url.searchParams.append('_sid', this.sid);
+		}
+
+		let req: RequestUrlParam = {
+			url: url.toString(),
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json'
+			},
+			throw: false,
+			body: JSON.stringify({ files: [path] })
+		};
+		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
+
+		const res = await this.safeRequestUrl(req);
+		if (res.status >= 400) {
+			const json = res.json as ApiResponse | null;
+			const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
+			throw new Error(`HTTP ${res.status}: ${errText}`);
+		}
+
+		// 如果没有 content-disposition 且返回了 JSON 失败响应，说明下载出错（如文件不存在等）
+		const json = res.json as ApiResponse | null;
+		const disposition = res.headers?.['content-disposition'] || '';
+		if (!disposition && json && json.success === false) {
+			const code = json.error?.code || 'Unknown';
+			throw new Error(`API Error Code: ${code}`);
+		}
+
 		return res.arrayBuffer;
 	}
 
@@ -446,9 +489,13 @@ export class SynologyClient {
 			req.body = JSON.stringify(body);
 
 			const res = await this.safeRequestUrl(req);
-			if (res.status >= 400) throw new Error(`HTTP ${res.status}: ${JSON.stringify(res.json || res.text)}`);
+			if (res.status >= 400) {
+				const json = res.json as ApiResponse | null;
+				const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
+				throw new Error(`HTTP ${res.status}: ${errText}`);
+			}
 			
-			const json = res.json as SearchResponse;
+			const json = res.json as SearchResponse | null;
 			if (json && json.success === false) {
 				const apiRes = json as ApiResponse;
 				const code = apiRes.error?.code || 'Unknown';
