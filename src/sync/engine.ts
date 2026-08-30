@@ -144,7 +144,7 @@ export class SyncEngine {
                 this.remoteDeletions.clear();
             }
             const plan = this.compareForForceUpload();
-            console.log(`[SynologySync] 强制上传计划: 上传 ${plan.uploads.size} 个文件, 远端删除 ${plan.deletionsRemote.size} 个文件`);
+            console.warn(`[SynologySync] 强制上传计划: 上传 ${plan.uploads.size} 个文件, 远端删除 ${plan.deletionsRemote.size} 个文件`);
             await this.executePlan(plan);
             this.state.setLastSyncTime(Math.floor(Date.now() / 1000));
             await this.state.save();
