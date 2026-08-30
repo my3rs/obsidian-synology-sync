@@ -347,6 +347,7 @@ export default class SynologySyncPlugin extends Plugin {
 			new Notice(t('notice.forceUploadSuccess'));
 		} catch (e: unknown) {
 			const errorMsg = e instanceof Error ? e.message : String(e);
+			console.error('[SynologySync] 强制上传失败:', e);
 			this.updateStatusBar('error');
 			new Notice(t('notice.forceUploadFailed', { error: errorMsg }));
 		} finally {
@@ -367,6 +368,7 @@ export default class SynologySyncPlugin extends Plugin {
 			new Notice(t('notice.forceDownloadSuccess'));
 		} catch (e: unknown) {
 			const errorMsg = e instanceof Error ? e.message : String(e);
+			console.error('[SynologySync] 强制下载失败:', e);
 			this.updateStatusBar('error');
 			new Notice(t('notice.forceDownloadFailed', { error: errorMsg }));
 		} finally {
@@ -387,6 +389,7 @@ export default class SynologySyncPlugin extends Plugin {
 			new Notice(t('notice.rebuildSuccess'));
 		} catch (e: unknown) {
 			const errorMsg = e instanceof Error ? e.message : String(e);
+			console.error('[SynologySync] 重建同步状态失败:', e);
 			this.updateStatusBar('error');
 			new Notice(t('notice.rebuildFailed', { error: errorMsg }));
 		} finally {

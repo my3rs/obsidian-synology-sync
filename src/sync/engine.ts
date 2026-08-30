@@ -135,8 +135,16 @@ export class SyncEngine {
             this.isSyncing = true;
             await this.state.load();
             await this.detectLocalChanges();
-            await this.detectRemoteChanges(0);
+            // 强制上传的核心目的是把本地全部推上去，远端扫描失败不应中断整个流程
+            try {
+                await this.detectRemoteChanges(0);
+            } catch (e: unknown) {
+                console.warn('[SynologySync] 强制上传时远端扫描失败，将忽略远端状态继续上传', e);
+                this.remoteChanges.clear();
+                this.remoteDeletions.clear();
+            }
             const plan = this.compareForForceUpload();
+            console.log(`[SynologySync] 强制上传计划: 上传 ${plan.uploads.size} 个文件, 远端删除 ${plan.deletionsRemote.size} 个文件`);
             await this.executePlan(plan);
             this.state.setLastSyncTime(Math.floor(Date.now() / 1000));
             await this.state.save();
