@@ -81,5 +81,19 @@ export default {
 	'ui.logModal.title': 'Synology Sync 同步日志',
 	'ui.logModal.empty': '暂无同步记录。',
 
+	// ui/conflict-modal.ts
+	'ui.conflictModal.title': '发现同步冲突',
+	'ui.conflictModal.desc': '文件 "{{file}}" 存在冲突。',
+	'ui.conflictModal.localTime': '本地修改时间',
+	'ui.conflictModal.remoteTime': '远端修改时间',
+	'ui.conflictModal.keepLocal': '保留本地版本',
+	'ui.conflictModal.keepLocalDesc': '使用本地文件覆盖群晖上的文件',
+	'ui.conflictModal.btnLocal': '保留本地',
+	'ui.conflictModal.keepRemote': '保留远端版本',
+	'ui.conflictModal.keepRemoteDesc': '使用群晖上的文件覆盖本地文件',
+	'ui.conflictModal.btnRemote': '保留远端',
+	'ui.conflictModal.keepBoth': '保留双方版本',
+	'ui.conflictModal.keepBothDesc': '保留本地文件，并将群晖文件下载为带有时间戳的副本',
+	'ui.conflictModal.btnBoth': '保留双方',
 
 };

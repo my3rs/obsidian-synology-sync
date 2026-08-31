@@ -79,5 +79,19 @@ export default {
 	'ui.logModal.title': 'Synology Sync Logs',
 	'ui.logModal.empty': 'No sync logs available yet.',
 
+	// ui/conflict-modal.ts
+	'ui.conflictModal.title': 'Sync Conflict Detected',
+	'ui.conflictModal.desc': 'Conflict found in file "{{file}}".',
+	'ui.conflictModal.localTime': 'Local Modified',
+	'ui.conflictModal.remoteTime': 'Remote Modified',
+	'ui.conflictModal.keepLocal': 'Keep Local Version',
+	'ui.conflictModal.keepLocalDesc': 'Overwrite the file on NAS with the local version',
+	'ui.conflictModal.btnLocal': 'Keep Local',
+	'ui.conflictModal.keepRemote': 'Keep Remote Version',
+	'ui.conflictModal.keepRemoteDesc': 'Overwrite the local file with the version from NAS',
+	'ui.conflictModal.btnRemote': 'Keep Remote',
+	'ui.conflictModal.keepBoth': 'Keep Both Versions',
+	'ui.conflictModal.keepBothDesc': 'Keep local file and download NAS file as a timestamped copy',
+	'ui.conflictModal.btnBoth': 'Keep Both',
 
 };
