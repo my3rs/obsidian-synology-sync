@@ -251,6 +251,10 @@ export default class SynologySyncPlugin extends Plugin {
 		if (file && file.path && file.path.startsWith(this.app.vault.configDir + '/')) {
 			return;
 		}
+		// 忽略同步本身的元数据文件
+		if (file && (file.name === '.sync_manifest.json' || file.name === '.sync_lock')) {
+			return;
+		}
 
 		if (this.syncTimeout) {
 			window.clearTimeout(this.syncTimeout);
