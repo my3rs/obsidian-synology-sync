@@ -1,39 +1,17 @@
 import { App, TFile, TFolder, Notice } from 'obsidian';
 import { SynologyClient } from '../api/client';
-import { SyncState } from './state';
+import { SyncState, LocalFileEntry } from './state';
 import { calculateSHA256 } from './utils';
 import { LocalFS } from '../fs/local';
 import { SyncLogger } from './logger';
 import { t } from '../locales';
-
-export interface SyncPlan {
-    uploads: Set<string>;
-    downloads: Set<string>;
-    deletionsLocal: Set<string>;
-    deletionsRemote: Set<string>;
-    conflicts: Set<string>;
-}
-
-interface SynologyResponse {
-    data?: {
-        hash?: string;
-        file?: { hash?: string };
-        files?: Array<{ path: string; hash: string; type: string }>;
-        items?: Array<{ path: string; display_path?: string; hash: string; type: string }>;
-    };
-    hash?: string;
-}
-
+import { ManifestManager, SyncManifest } from './manifest';
+import { computeSyncPlan, LocalFileInfo, SyncPlan } from './differ';
+import { ConflictResolutionModal } from '../ui/conflict-modal';
 
 export class SyncEngine {
     private localFs: LocalFS;
-    
-    // 暂存当次同步的分析结果
-    private localChanges: Map<string, { hash: string, mtime: number }> = new Map();
-    private localDeletions: Set<string> = new Set();
-    
-    private remoteChanges: Map<string, { hash: string }> = new Map();
-    private remoteDeletions: Set<string> = new Set();
+    private manifestManager: ManifestManager;
     private isSyncing: boolean = false;
 
     constructor(
@@ -41,14 +19,14 @@ export class SyncEngine {
         private client: SynologyClient,
         private state: SyncState,
         private logger: SyncLogger,
-        private remoteFolder: string // 例如 /mydrive/ObsidianSync
+        private remoteFolder: string
     ) {
-        // Normalize the remote folder to ensure it starts with a valid root (e.g. /mydrive)
         if (!this.remoteFolder.startsWith('/mydrive/') && !this.remoteFolder.startsWith('/team-folders/')) {
             this.remoteFolder = `/mydrive${this.remoteFolder.startsWith('/') ? '' : '/'}${this.remoteFolder}`;
         }
         this.remoteFolder = this.remoteFolder.replace(/\/\//g, '/');
         this.localFs = new LocalFS(app);
+        this.manifestManager = new ManifestManager(client, this.remoteFolder);
     }
 
     private toRemotePath(localPath: string): string {
@@ -83,30 +61,50 @@ export class SyncEngine {
         return remotePath;
     }
 
-    /**
-     * 运行同步
-     */
     async runSync(fullScan: boolean = false, showNotice: boolean = false): Promise<boolean> {
         if (this.isSyncing) return false;
         
         let notice: Notice | null = null;
+        let lockAcquired = false;
+        let deviceId = '';
+        
         try {
             this.isSyncing = true;
             if (showNotice) {
-                notice = new Notice(t('notice.engine.syncing'), 0); // 0 means it won't auto-hide
+                notice = new Notice(t('notice.engine.syncing'), 0);
             }
             
             await this.state.load();
-            await this.detectLocalChanges();
-            await this.detectRemoteChanges(fullScan ? 0 : this.state.getLastSyncTime());
+            deviceId = this.state.getDeviceId();
             
-            const plan = this.compareAndPlan();
-            await this.executePlan(plan);
+            lockAcquired = await this.manifestManager.acquireLock(deviceId);
+            if (!lockAcquired) {
+                if (notice) {
+                    notice.setMessage('Sync skipped: Lock is held by another device.');
+                    window.setTimeout(() => notice?.hide(), 3000);
+                }
+                return false;
+            }
             
-            this.state.setLastSyncTime(Math.floor(Date.now() / 1000));
-            const hasChanges = plan.uploads.size > 0 || plan.downloads.size > 0 || plan.deletionsLocal.size > 0 || plan.deletionsRemote.size > 0 || plan.conflicts.size > 0;
+            const manifest = await this.manifestManager.downloadManifest();
+            const localFiles = await this.detectLocalChanges();
             
-            if (hasChanges || fullScan) {
+            const snapshotsMap = new Map<string, LocalFileEntry>();
+            for (const path of this.state.getAllPaths()) {
+                const s = this.state.getFileState(path);
+                if (s) snapshotsMap.set(path, s);
+            }
+            
+            const plan = computeSyncPlan(
+                localFiles, 
+                snapshotsMap, 
+                new Map(Object.entries(manifest.files))
+            );
+            
+            const hasChanges = await this.executePlan(plan, manifest, deviceId, localFiles);
+            
+            if (hasChanges) {
+                await this.manifestManager.uploadManifest(manifest);
                 await this.state.save();
             }
             
@@ -125,26 +123,44 @@ export class SyncEngine {
             }
             throw e;
         } finally {
+            if (lockAcquired && deviceId) {
+                await this.manifestManager.releaseLock(deviceId);
+            }
             this.isSyncing = false;
         }
     }
 
     async forceUpload(): Promise<boolean> {
         if (this.isSyncing) return false;
+        let lockAcquired = false;
+        let deviceId = '';
         try {
             this.isSyncing = true;
             await this.state.load();
-            await this.detectLocalChanges();
-            // 强制上传的核心目的是把本地全部推上去，远端扫描失败不应中断整个流程
-            try {
-                await this.detectRemoteChanges(0);
-            } catch (e: unknown) {
-                console.warn('[SynologySync] 强制上传时远端扫描失败，将忽略远端状态继续上传', e);
-                this.remoteChanges.clear();
-                this.remoteDeletions.clear();
+            deviceId = this.state.getDeviceId();
+            
+            lockAcquired = await this.manifestManager.acquireLock(deviceId);
+            if (!lockAcquired) throw new Error('Lock held by another device');
+
+            const manifest = await this.manifestManager.downloadManifest();
+            const localFiles = await this.detectLocalChanges();
+
+            const plan: SyncPlan = {
+                uploads: new Set(localFiles.keys()),
+                downloads: new Set(),
+                deletionsLocal: new Set(),
+                deletionsRemote: new Set(),
+                conflicts: new Set(),
+                snapshotClears: new Set(),
+                snapshotUpdates: new Map()
+            };
+
+            for (const path of Object.keys(manifest.files)) {
+                if (!localFiles.has(path)) {
+                    plan.deletionsRemote.add(path);
+                }
             }
 
-            // 先创建所有本地目录（包括空目录），按路径层级排序确保父目录先创建
             const localFolders = this.app.vault.getAllLoadedFiles()
                 .filter((f): f is TFolder => f instanceof TFolder && f.path !== '/' && f.path !== '')
                 .filter(f => !f.path.startsWith(this.app.vault.configDir + '/'))
@@ -152,38 +168,66 @@ export class SyncEngine {
                 .sort((a, b) => a.split('/').length - b.split('/').length);
 
             for (const folderPath of localFolders) {
-                try {
-                    await this.client.createFolder(this.toRemotePath(folderPath));
-                } catch {
-                    // 目录已存在或创建失败均忽略，后续文件上传失败时会再次尝试
-                }
+                try { await this.client.createFolder(this.toRemotePath(folderPath)); } catch { /* ignore */ }
             }
 
-            const plan = this.compareForForceUpload();
-            console.warn(`[SynologySync] 强制上传: 上传 ${plan.uploads.size} 个文件, 远端删除 ${plan.deletionsRemote.size} 个文件`);
-            await this.executePlan(plan);
-            this.state.setLastSyncTime(Math.floor(Date.now() / 1000));
+            await this.executePlan(plan, manifest, deviceId, localFiles);
+            await this.manifestManager.uploadManifest(manifest);
             await this.state.save();
             return true;
         } finally {
+            if (lockAcquired && deviceId) await this.manifestManager.releaseLock(deviceId);
             this.isSyncing = false;
         }
     }
 
     async forceDownload(): Promise<boolean> {
         if (this.isSyncing) return false;
+        let lockAcquired = false;
+        let deviceId = '';
         try {
             this.isSyncing = true;
             await this.state.load();
-            await this.detectLocalChanges();
-            await this.detectRemoteChanges(0);
-            const plan = this.compareForForceDownload();
-            console.warn(`[SynologySync] 强制下载: 下载 ${plan.downloads.size} 个文件, 本地删除 ${plan.deletionsLocal.size} 个文件`);
-            await this.executePlan(plan);
-            this.state.setLastSyncTime(Math.floor(Date.now() / 1000));
+            deviceId = this.state.getDeviceId();
+            
+            lockAcquired = await this.manifestManager.acquireLock(deviceId);
+            if (!lockAcquired) throw new Error('Lock held by another device');
+
+            const manifest = await this.manifestManager.downloadManifest();
+            const localFiles = await this.detectLocalChanges();
+
+            const plan: SyncPlan = {
+                uploads: new Set(),
+                downloads: new Set(),
+                deletionsLocal: new Set(),
+                deletionsRemote: new Set(),
+                conflicts: new Set(),
+                snapshotClears: new Set(),
+                snapshotUpdates: new Map()
+            };
+
+            for (const [path, entry] of Object.entries(manifest.files)) {
+                if (!entry.deleted) {
+                    plan.downloads.add(path);
+                }
+            }
+
+            if (Object.keys(manifest.files).length === 0) {
+                console.warn("Remote manifest is empty. Skipping local deletions.");
+            } else {
+                for (const path of localFiles.keys()) {
+                    if (!manifest.files[path] || manifest.files[path].deleted) {
+                        plan.deletionsLocal.add(path);
+                    }
+                }
+            }
+
+            await this.executePlan(plan, manifest, deviceId, localFiles);
+            await this.manifestManager.uploadManifest(manifest);
             await this.state.save();
             return true;
         } finally {
+            if (lockAcquired && deviceId) await this.manifestManager.releaseLock(deviceId);
             this.isSyncing = false;
         }
     }
@@ -194,264 +238,82 @@ export class SyncEngine {
         return await this.runSync(true);
     }
 
-    /**
-     * 第一步：本地检测 O(1) 预筛 + Hash 计算
-     */
-    private async detectLocalChanges() {
-        this.localChanges.clear();
-        this.localDeletions.clear();
-
+    private async detectLocalChanges(): Promise<Map<string, LocalFileInfo>> {
+        const localFiles = new Map<string, LocalFileInfo>();
         const allFiles = this.app.vault.getFiles();
-        const currentPaths = new Set<string>();
 
         for (const file of allFiles) {
-            // 默认忽略 .obsidian 配置文件夹，避免配置冲突
             if (file.path.startsWith(this.app.vault.configDir + '/')) continue;
-            
-            currentPaths.add(file.path);
+            // 忽略同步本身的元数据文件
+            if (file.name === '.sync_manifest.json' || file.name === '.sync_lock') continue;
             
             const state = this.state.getFileState(file.path);
             const currentMtime = file.stat.mtime;
 
             if (!state) {
-                // 新文件
                 const buffer = await this.app.vault.readBinary(file);
                 const hash = await calculateSHA256(buffer);
-                this.localChanges.set(file.path, { hash, mtime: currentMtime });
-            } else if (state.local_mtime !== currentMtime) {
-                // mtime 改变，进一步检查 Hash
+                localFiles.set(file.path, { hash, mtime: currentMtime });
+            } else if (state.localMtime !== currentMtime) {
                 const buffer = await this.app.vault.readBinary(file);
                 const hash = await calculateSHA256(buffer);
-                if (hash !== state.local_hash) {
-                    this.localChanges.set(file.path, { hash, mtime: currentMtime });
-                } else {
-                    // mtime 变了但内容没变，静默更新 mtime
-                    state.local_mtime = currentMtime;
-                    this.state.updateFileState(file.path, state);
-                }
-            }
-        }
-
-        // 检测本地删除
-        for (const savedPath of this.state.getAllPaths()) {
-            if (!currentPaths.has(savedPath)) {
-                this.localDeletions.add(savedPath);
-            }
-        }
-    }
-
-    /**
-     * 第二步：远端检测 O(1) 增量拉取
-     */
-    private async detectRemoteChanges(lastSyncTime: number) {
-        this.remoteChanges.clear();
-        this.remoteDeletions.clear();
-
-        if (lastSyncTime === 0) {
-            // 首次同步 (没有快照)，不能走增量，必须走全量拉取
-            await this.fullRemoteScan(this.remoteFolder);
-            return;
-        }
-
-        // 1. 增量获取被修改的文件
-        const filesRes = await this.client.search(this.remoteFolder, 'file', lastSyncTime) as SynologyResponse;
-        if (filesRes?.data?.items) {
-            for (const item of filesRes.data.items) {
-                const localPath = this.toLocalPath(item.display_path || item.path);
-                if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
-                this.remoteChanges.set(localPath, { hash: item.hash });
-            }
-        }
-
-        // 2. 增量获取发生结构变动（内部删减过文件）的文件夹，以抓取被删除的文件
-        const foldersRes = await this.client.search(this.remoteFolder, 'folder', lastSyncTime) as SynologyResponse;
-        if (foldersRes?.data?.items) {
-            for (const folder of foldersRes.data.items) {
-                const folderLocal = this.toLocalPath(folder.display_path || folder.path);
-                
-                // 对变动过的文件夹进行一次 listFiles，看看少了谁
-                const listPath = folder.display_path || folder.path;
-                const listRes = await this.client.listFiles(listPath) as SynologyResponse;
-                const currentFiles = new Set<string>();
-                if (listRes?.data?.items) {
-                    for (const f of listRes.data.items) {
-                        if (f.type === 'file') currentFiles.add(this.toLocalPath(f.display_path || f.path));
-                    }
-                }
-
-                // 对比该目录下的 sync_data 快照
-                const snapshotPaths = this.state.getAllPaths().filter(p => {
-                    const parent = p.includes('/') ? p.substring(0, p.lastIndexOf('/')) : '';
-                    return parent === folderLocal;
-                });
-
-                for (const p of snapshotPaths) {
-                    if (!currentFiles.has(p)) {
-                        this.remoteDeletions.add(p);
-                    }
-                }
-            }
-        }
-    }
-
-    private async fullRemoteScan(remotePath: string) {
-        try {
-            const res = await this.client.listFiles(remotePath) as SynologyResponse;
-            if (res?.data?.items) {
-                for (const f of res.data.items) {
-                    if (f.type === 'file') {
-                        const localPath = this.toLocalPath(f.display_path || f.path);
-                        if (localPath.startsWith(this.app.vault.configDir + '/')) continue;
-                        this.remoteChanges.set(localPath, { hash: f.hash });
-                    } else if (f.type === 'folder' || f.type === 'dir') {
-                        const nextPath = f.display_path || f.path;
-                        await this.fullRemoteScan(nextPath);
-                    }
-                }
-            }
-        } catch (e: unknown) {
-            // 如果根目录不存在 (刚安装)，listFiles 会报错 404 或特定错误码
-            // 我们必须严格判断只有当扫描的是根目录且报错 1000 时，才去创建。
-            // 子目录的报错必须直接抛出，否则会导致扫描中断且静默忽略！
-            const errorMsg = e instanceof Error ? e.message : String(e);
-            const isRoot = remotePath === this.remoteFolder;
-            if (isRoot && errorMsg.includes('1000')) {
-                console.warn("Remote root directory does not exist, will create automatically", errorMsg);
-                try { 
-                    await this.client.createFolder(this.remoteFolder); 
-                } catch { 
-                    throw e; // 如果创建也失败了，必须抛出错误阻断同步，否则会误删所有本地文件！
-                }
-                
-                // 如果创建成功了，重新扫描一次空目录以防万一
-                return;
+                localFiles.set(file.path, { hash, mtime: currentMtime });
             } else {
-                throw e;
+                localFiles.set(file.path, { hash: state.localHash, mtime: state.localMtime });
             }
         }
+        return localFiles;
     }
 
-    /**
-     * 第三步：三向比对，生成执行计划
-     */
-    private compareAndPlan(): SyncPlan {
-        const plan: SyncPlan = {
-            uploads: new Set(), downloads: new Set(),
-            deletionsLocal: new Set(), deletionsRemote: new Set(), conflicts: new Set()
-        };
+    private async executePlan(
+        plan: SyncPlan, 
+        manifest: SyncManifest, 
+        deviceId: string,
+        localFiles: Map<string, LocalFileInfo>
+    ): Promise<boolean> {
+        const { uploads, downloads, deletionsLocal, deletionsRemote, conflicts, snapshotClears, snapshotUpdates } = plan;
 
-        // 收集所有涉及变动的文件路径
-        const allPaths = new Set([
-            ...this.localChanges.keys(),
-            ...this.remoteChanges.keys(),
-            ...this.localDeletions,
-            ...this.remoteDeletions
-        ]);
-
-        for (const path of allPaths) {
-            const local = this.localChanges.get(path);
-            const remote = this.remoteChanges.get(path);
-            const deletedLocally = this.localDeletions.has(path);
-            const deletedRemotely = this.remoteDeletions.has(path);
-
-            if (deletedLocally && deletedRemotely) {
-                // 两边都删除了，直接从状态表移除
-                this.state.removeFileState(path);
-            } else if (deletedLocally) {
-                if (remote) plan.conflicts.add(path); // 本地删除，远端修改 -> 冲突恢复
-                else plan.deletionsRemote.add(path); // 远端同步删除
-            } else if (deletedRemotely) {
-                if (local) plan.conflicts.add(path); // 远端删除，本地修改 -> 冲突恢复
-                else plan.deletionsLocal.add(path); // 本地同步删除
-            } else if (local && remote) {
-                // 因为 Hash 是异构的，所以只要两边都出现了改变，就一律视为冲突（包含首次同步）
-                plan.conflicts.add(path);
-            } else if (local) {
-                plan.uploads.add(path);
-            } else if (remote) {
-                plan.downloads.add(path);
-            }
-        }
-
-        return plan;
-    }
-
-    private compareForForceUpload(): SyncPlan {
-        const plan: SyncPlan = {
-            uploads: new Set(), downloads: new Set(),
-            deletionsLocal: new Set(), deletionsRemote: new Set(), conflicts: new Set()
-        };
-        const allFiles = this.app.vault.getFiles();
-        const currentPaths = new Set<string>();
-        for (const file of allFiles) {
-            if (file.path.startsWith(this.app.vault.configDir + '/')) continue;
-            plan.uploads.add(file.path);
-            currentPaths.add(file.path);
-        }
-        for (const path of this.remoteChanges.keys()) {
-            if (!currentPaths.has(path)) {
-                plan.deletionsRemote.add(path);
-            }
-        }
-        return plan;
-    }
-
-    private compareForForceDownload(): SyncPlan {
-        const plan: SyncPlan = {
-            uploads: new Set(), downloads: new Set(),
-            deletionsLocal: new Set(), deletionsRemote: new Set(), conflicts: new Set()
-        };
-        for (const path of this.remoteChanges.keys()) {
-            plan.downloads.add(path);
+        let hasChanges = false;
+        
+        for (const [path, state] of snapshotUpdates.entries()) {
+            this.state.updateFileState(path, state);
+            hasChanges = true;
         }
         
-        // 增加空扫描保护：如果远端完全空了（且不是故意清空），防止把本地全部误删
-        // 在强制下载时，如果 remoteChanges 是空的，我们应该抛出警告或者跳过删除
-        if (this.remoteChanges.size === 0) {
-            console.warn("Remote changes is completely empty. Skipping local deletions to protect data.");
-            return plan;
+        for (const path of snapshotClears) {
+            this.state.removeFileState(path);
+            hasChanges = true;
         }
 
-        const allFiles = this.app.vault.getFiles();
-        for (const file of allFiles) {
-            if (file.path.startsWith(this.app.vault.configDir + '/')) continue;
-            if (!this.remoteChanges.has(file.path)) {
-                plan.deletionsLocal.add(file.path);
-            }
-        }
-        return plan;
-    }
-
-    /**
-     * 第四步：执行计划 (断点续传/原子更新)
-     */
-    private async executePlan(plan: SyncPlan) {
-        const { uploads, downloads, deletionsLocal, deletionsRemote, conflicts } = plan;
-
-        // 1. Uploads
+        // Uploads
         for (const path of uploads) {
             const file = this.app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
                 try {
                     const buffer = await this.app.vault.readBinary(file);
-                    const uploadRes = await this.client.uploadFile(this.toRemotePath(path), buffer);
+                    await this.client.uploadFile(this.toRemotePath(path), buffer);
                     
-                    const remoteMeta = await this.client.getMetadata(this.toRemotePath(path));
-                    const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
-                    if (!rHash) console.warn(`Failed to get Hash from remote, path: ${path}`, remoteMeta);
-
-                    let localHash = this.localChanges.get(path)?.hash;
-                    if (!localHash) {
-                        localHash = await calculateSHA256(buffer);
-                    }
+                    const localInfo = localFiles.get(path);
+                    const localHash = localInfo ? localInfo.hash : await calculateSHA256(buffer);
+                    
+                    const rev = (manifest.files[path]?.rev || 0) + 1;
+                    manifest.files[path] = {
+                        rev,
+                        hash: localHash,
+                        size: file.stat.size,
+                        updatedBy: deviceId,
+                        updatedAt: Date.now()
+                    };
 
                     this.state.updateFileState(path, {
-                        local_mtime: file.stat.mtime,
-                        local_hash: localHash,
-                        remote_hash: rHash
+                        localMtime: file.stat.mtime,
+                        localHash: localHash,
+                        syncedRev: rev,
+                        syncedHash: localHash
                     });
-                    await this.state.save();
+                    
                     await this.logger.addLog({ action: 'Upload', file: path });
+                    hasChanges = true;
                 } catch (e: unknown) {
                     const errorMsg = e instanceof Error ? e.message : String(e);
                     console.error(`[SynologySync] Error uploading file ${path}:`, e);
@@ -460,95 +322,151 @@ export class SyncEngine {
             }
         }
 
+        // Downloads
         for (const path of downloads) {
-            const buffer = await this.client.downloadFile(this.toRemotePath(path));
-            await this.localFs.write(path, buffer);
-            
-            const file = this.app.vault.getAbstractFileByPath(path);
-            if (file && 'stat' in file) {
-                const localHash = await calculateSHA256(buffer);
-                this.state.updateFileState(path, {
-                    local_mtime: (file as import("obsidian").TFile).stat.mtime,
-                    local_hash: localHash,
-                    remote_hash: this.remoteChanges.get(path)!.hash
-                });
-                await this.state.save();
+            try {
+                const buffer = await this.client.downloadFile(this.toRemotePath(path));
+                await this.localFs.write(path, buffer);
+                
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (file instanceof TFile) {
+                    const manifestEntry = manifest.files[path];
+                    this.state.updateFileState(path, {
+                        localMtime: file.stat.mtime,
+                        localHash: manifestEntry!.hash,
+                        syncedRev: manifestEntry!.rev,
+                        syncedHash: manifestEntry!.hash
+                    });
+                }
+                await this.logger.addLog({ action: 'Download', file: path });
+                hasChanges = true;
+            } catch (e: unknown) {
+                const errorMsg = e instanceof Error ? e.message : String(e);
+                console.error(`[SynologySync] Error downloading file ${path}:`, e);
+                await this.logger.addLog({ action: 'Error', file: path, details: errorMsg });
             }
-            await this.logger.addLog({ action: 'Download', file: path });
         }
 
-        // 3. Deletions (Remote)
+        // Deletions (Remote)
         for (const path of deletionsRemote) {
             try { await this.client.deleteFile(this.toRemotePath(path)); } catch { /* ignore */ }
+            const rev = (manifest.files[path]?.rev || 0) + 1;
+            manifest.files[path] = {
+                rev,
+                hash: '',
+                size: 0,
+                updatedBy: deviceId,
+                updatedAt: Date.now(),
+                deleted: true,
+                deletedAt: Date.now()
+            };
             this.state.removeFileState(path);
-            await this.state.save();
             await this.logger.addLog({ action: 'Delete Remote', file: path });
+            hasChanges = true;
         }
 
-        // 4. Deletions (Local)
+        // Deletions (Local)
         for (const path of deletionsLocal) {
             await this.localFs.delete(path);
             this.state.removeFileState(path);
-            await this.state.save();
             await this.logger.addLog({ action: 'Delete Local', file: path });
+            hasChanges = true;
         }
 
-        // 5. Conflicts (保留本地，下载远端产生副本，并以上传本地为最新线)
+        // Conflicts
         for (const path of conflicts) {
-            const buffer = await this.client.downloadFile(this.toRemotePath(path));
+            const localInfo = localFiles.get(path);
+            const manifestEntry = manifest.files[path];
             
-            const extIdx = path.lastIndexOf('.');
-            const base = extIdx > -1 ? path.substring(0, extIdx) : path;
-            const ext = extIdx > -1 ? path.substring(extIdx) : '';
-            const dateStr = new Date().toISOString().split('T')[0];
-            const conflictPath = `${base} (Sync Conflict ${dateStr})${ext}`;
+            const localMtime = localInfo ? localInfo.mtime : 0;
+            const remoteMtime = manifestEntry ? manifestEntry.updatedAt : 0;
             
-            await this.localFs.write(conflictPath, buffer);
-            
-            const file = this.app.vault.getAbstractFileByPath(path);
-            if (file instanceof TFile) {
-                try {
-                    const localBuffer = await this.app.vault.readBinary(file);
-                    const uploadRes = await this.client.uploadFile(this.toRemotePath(path), localBuffer);
-                    
-                    const remoteMeta = await this.client.getMetadata(this.toRemotePath(path));
-                    const rHash = this.extractHash(remoteMeta) || this.extractHash(uploadRes);
-                    if (!rHash) console.warn(`Failed to get Hash from remote, conflict path: ${path}`, remoteMeta);
+            const modal = new ConflictResolutionModal(this.app, path, localMtime, remoteMtime);
+            const resolution = await modal.waitForResolution();
 
-                    const localHash = await calculateSHA256(localBuffer);
+            if (resolution === 'local') {
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (file instanceof TFile) {
+                    const buffer = await this.app.vault.readBinary(file);
+                    await this.client.uploadFile(this.toRemotePath(path), buffer);
+                    
+                    const localHash = localInfo ? localInfo.hash : await calculateSHA256(buffer);
+                    const rev = (manifest.files[path]?.rev || 0) + 1;
+                    manifest.files[path] = {
+                        rev,
+                        hash: localHash,
+                        size: file.stat.size,
+                        updatedBy: deviceId,
+                        updatedAt: Date.now()
+                    };
                     this.state.updateFileState(path, {
-                        local_mtime: file.stat.mtime,
-                        local_hash: localHash,
-                        remote_hash: rHash
+                        localMtime: file.stat.mtime,
+                        localHash,
+                        syncedRev: rev,
+                        syncedHash: localHash
                     });
-                    await this.state.save();
-                    await this.logger.addLog({ action: 'Conflict', file: path, details: `Keep local, save copy as ${conflictPath}` });
-                } catch (e: unknown) {
-                    const errorMsg = e instanceof Error ? e.message : String(e);
-                    console.error(`[SynologySync] Error uploading conflict file ${path}:`, e);
-                    await this.logger.addLog({ action: 'Error', file: path, details: errorMsg });
+                    await this.logger.addLog({ action: 'Conflict', file: path, details: 'Resolved: Keep Local' });
+                    hasChanges = true;
+                }
+            } else if (resolution === 'remote') {
+                const buffer = await this.client.downloadFile(this.toRemotePath(path));
+                await this.localFs.write(path, buffer);
+                
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (file instanceof TFile) {
+                    this.state.updateFileState(path, {
+                        localMtime: file.stat.mtime,
+                        localHash: manifestEntry!.hash,
+                        syncedRev: manifestEntry!.rev,
+                        syncedHash: manifestEntry!.hash
+                    });
+                }
+                await this.logger.addLog({ action: 'Conflict', file: path, details: 'Resolved: Keep Remote' });
+                hasChanges = true;
+            } else {
+                // 'both': keep local, download remote as copy
+                const buffer = await this.client.downloadFile(this.toRemotePath(path));
+                
+                const extIdx = path.lastIndexOf('.');
+                const base = extIdx > -1 ? path.substring(0, extIdx) : path;
+                const ext = extIdx > -1 ? path.substring(extIdx) : '';
+                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const shortDeviceId = deviceId.slice(0, 6);
+                const conflictPath = `${base} (Conflict ${ts} ${shortDeviceId})${ext}`;
+                
+                await this.localFs.write(conflictPath, buffer);
+                
+                // Now upload local as the main version
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (file instanceof TFile) {
+                    const localBuffer = await this.app.vault.readBinary(file);
+                    await this.client.uploadFile(this.toRemotePath(path), localBuffer);
+                    
+                    const localHash = localInfo ? localInfo.hash : await calculateSHA256(localBuffer);
+                    const rev = (manifest.files[path]?.rev || 0) + 1;
+                    manifest.files[path] = {
+                        rev,
+                        hash: localHash,
+                        size: file.stat.size,
+                        updatedBy: deviceId,
+                        updatedAt: Date.now()
+                    };
+                    this.state.updateFileState(path, {
+                        localMtime: file.stat.mtime,
+                        localHash,
+                        syncedRev: rev,
+                        syncedHash: localHash
+                    });
+                    
+                    await this.logger.addLog({ action: 'Conflict', file: path, details: `Resolved: Both. Kept local, saved remote as ${conflictPath}` });
+                    hasChanges = true;
                 }
             }
         }
         
-        // 收尾：如果发生过同步，保存日志到本地磁盘
-        const hasChanges = uploads.size > 0 || downloads.size > 0 || deletionsLocal.size > 0 || deletionsRemote.size > 0 || conflicts.size > 0;
         if (hasChanges) {
             await this.logger.flush();
         }
-    }
-
-    private extractHash(inputObj: unknown): string {
-        const obj = inputObj as SynologyResponse;
-        if (!obj) return '';
-        if (typeof obj.hash === 'string') return obj.hash;
-        if (obj.data) {
-            if (typeof obj.data.hash === 'string') return obj.data.hash;
-            if (obj.data.file && typeof obj.data.file.hash === 'string') return obj.data.file.hash;
-            if (Array.isArray(obj.data.files) && obj.data.files[0] && typeof obj.data.files[0].hash === 'string') {
-                return obj.data.files[0].hash;
-            }
-        }
-        return '';
+        return hasChanges;
     }
 }
