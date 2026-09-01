@@ -1,4 +1,4 @@
-import { Notice, Plugin, setIcon, setTooltip, TAbstractFile } from 'obsidian';
+import { Notice, Plugin, setIcon, setTooltip, TAbstractFile, TFile } from 'obsidian';
 import {
 	DEFAULT_SETTINGS,
 	SynologySyncSettings,
@@ -114,6 +114,34 @@ export default class SynologySyncPlugin extends Plugin {
 				void this.toggleSyncStatusView();
 			}
 		});
+
+		this.registerEvent(
+			this.app.workspace.on('file-menu', (menu, file) => {
+				if (file instanceof TFile) {
+					menu.addItem((item) => {
+						item
+							.setTitle(t('command.toggleStatusView'))
+							.setIcon('cloud')
+							.onClick(() => {
+								void this.toggleSyncStatusView();
+							});
+					});
+				}
+			})
+		);
+
+		this.registerEvent(
+			this.app.workspace.on('editor-menu', (menu) => {
+				menu.addItem((item) => {
+					item
+						.setTitle(t('command.toggleStatusView'))
+						.setIcon('cloud')
+						.onClick(() => {
+							void this.toggleSyncStatusView();
+						});
+				});
+			})
+		);
 
 
 		// 添加状态栏提示
