@@ -45,6 +45,89 @@
 .sync-log-item:last-child {
     border-bottom: none;
 }
+.synology-sync-log-time {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    min-width: 80px;
+}
+
+/* Sync Status View */
+.synology-sync-status-view {
+    padding: 10px;
+}
+
+.sync-status-no-file {
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: 20px;
+}
+
+.sync-status-header {
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+    word-break: break-all;
+}
+
+.sync-status-indicator {
+    margin: 15px 0;
+    padding: 10px;
+    background-color: var(--background-secondary);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+}
+
+.sync-status-value {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+}
+
+.sync-status-icon {
+    display: inline-flex;
+    margin-right: 4px;
+}
+
+.sync-status-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.synology-sync-status-view h4 {
+    margin-top: 15px;
+    margin-bottom: 5px;
+    color: var(--text-normal);
+}
+
+.synology-sync-status-view ul {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+.synology-sync-status-view li {
+    margin-bottom: 4px;
+}
+
+.sync-status-not-found {
+    color: var(--text-error);
+    font-style: italic;
+    font-size: 0.9em;
+}
+
+.sync-status-actions {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sync-status-actions button {
+    width: 100%;
+}
+
 .sync-log-time {
     color: var(--text-muted);
     font-family: monospace;

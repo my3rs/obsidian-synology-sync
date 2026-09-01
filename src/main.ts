@@ -88,49 +88,7 @@ export default class SynologySyncPlugin extends Plugin {
 			id: 'upload-active',
 			name: t('command.uploadActive'),
 			callback: async () => {
-				const activeFile = this.app.workspace.getActiveFile();
-				if (!activeFile) {
-					new Notice(t('notice.noActiveFile'));
-					return;
-				}
-
-				let notice: Notice | null = null;
-				try {
-					const { SynologyClient } = await import('./api/client');
-					const { nasUrl, username, password, sid, syncFolder } = this.settings;
-					if (!sid) {
-						new Notice(t('notice.loginRequired'));
-						return;
-					}
-
-					const client = new SynologyClient(nasUrl, username, password);
-					(client as unknown as { sid: string }).sid = sid; // 注入现有的 sid
-
-					// 读取文件内容为二进制
-					const buffer = await this.app.vault.readBinary(activeFile);
-
-					let targetPath = `${syncFolder}/${activeFile.path}`;
-					if (!targetPath.startsWith('/mydrive/') && !targetPath.startsWith('/team-folders/')) {
-						targetPath = `/mydrive${targetPath.startsWith('/') ? '' : '/'}${targetPath}`;
-					}
-					// 移除可能存在的双斜杠
-					targetPath = targetPath.replace(/\/\//g, '/');
-
-					const n = new Notice(t('notice.uploading', { targetPath }), 0);
-					notice = n;
-					await client.uploadFile(targetPath, buffer);
-					n.setMessage(t('notice.uploadSuccess'));
-					window.setTimeout(() => n.hide(), 3000);
-				} catch (err: unknown) {
-					const errorMsg = err instanceof Error ? err.message : String(err);
-					const n = notice;
-					if (n) {
-						n.setMessage(t('notice.uploadFailed', { error: errorMsg }));
-						window.setTimeout(() => n.hide(), 5000);
-					} else {
-						new Notice(t('notice.uploadFailed', { error: errorMsg }));
-					}
-				}
+				await this.uploadActiveFile();
 			}
 		});
 
@@ -139,51 +97,24 @@ export default class SynologySyncPlugin extends Plugin {
 			id: 'download-active',
 			name: t('command.downloadActive'),
 			callback: async () => {
-				const activeFile = this.app.workspace.getActiveFile();
-				if (!activeFile) {
-					new Notice(t('notice.noActiveFileToDefine'));
-					return;
-				}
-
-				let notice: Notice | null = null;
-				try {
-					const { SynologyClient } = await import('./api/client');
-					const { LocalFS } = await import('./fs/local');
-					const { nasUrl, username, password, sid, syncFolder } = this.settings;
-					if (!sid) {
-						new Notice(t('notice.loginRequired'));
-						return;
-					}
-
-					const client = new SynologyClient(nasUrl, username, password);
-					(client as unknown as { sid: string }).sid = sid;
-
-					let targetPath = `${syncFolder}/${activeFile.path}`;
-					if (!targetPath.startsWith('/mydrive/') && !targetPath.startsWith('/team-folders/')) {
-						targetPath = `/mydrive${targetPath.startsWith('/') ? '' : '/'}${targetPath}`;
-					}
-					targetPath = targetPath.replace(/\/\//g, '/');
-
-					const n = new Notice(t('notice.downloading', { targetPath }), 0);
-					notice = n;
-					const buffer = await client.downloadFile(targetPath);
-					const localFs = new LocalFS(this.app);
-					await localFs.write(activeFile.path, buffer);
-					
-					n.setMessage(t('notice.downloadSuccess'));
-					window.setTimeout(() => n.hide(), 3000);
-				} catch (err: unknown) {
-					const errorMsg = err instanceof Error ? err.message : String(err);
-					const n = notice;
-					if (n) {
-						n.setMessage(t('notice.downloadFailed', { error: errorMsg }));
-						window.setTimeout(() => n.hide(), 5000);
-					} else {
-						new Notice(t('notice.downloadFailed', { error: errorMsg }));
-					}
-				}
+				await this.downloadActiveFile();
 			}
 		});
+
+		const { SyncStatusView, VIEW_TYPE_SYNC_STATUS } = await import('./ui/sync-status-view');
+		this.registerView(
+			VIEW_TYPE_SYNC_STATUS,
+			(leaf) => new SyncStatusView(leaf, this)
+		);
+
+		this.addCommand({
+			id: 'toggle-sync-status-view',
+			name: t('command.toggleStatusView'),
+			callback: () => {
+				void this.toggleSyncStatusView();
+			}
+		});
+
 
 		// 添加状态栏提示
 		this.statusBarItem = this.addStatusBarItem();
@@ -244,6 +175,20 @@ export default class SynologySyncPlugin extends Plugin {
 				new SyncLogModal(this.app, this.logger).open();
 			}
 		});
+	}
+
+	async toggleSyncStatusView() {
+		const { VIEW_TYPE_SYNC_STATUS } = await import('./ui/sync-status-view');
+		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_SYNC_STATUS);
+		if (leaves.length > 0) {
+			this.app.workspace.detachLeavesOfType(VIEW_TYPE_SYNC_STATUS);
+		} else {
+			const leaf = this.app.workspace.getRightLeaf(false);
+			if (leaf) {
+				await leaf.setViewState({ type: VIEW_TYPE_SYNC_STATUS, active: true });
+				void this.app.workspace.revealLeaf(leaf);
+			}
+		}
 	}
 
 	triggerAutoSync(file?: TAbstractFile) {
@@ -398,6 +343,98 @@ export default class SynologySyncPlugin extends Plugin {
 			new Notice(t('notice.rebuildFailed', { error: errorMsg }));
 		} finally {
 			this.isSyncing = false;
+		}
+	}
+
+	async uploadActiveFile() {
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile) {
+			new Notice(t('notice.noActiveFile'));
+			return;
+		}
+
+		let notice: Notice | null = null;
+		try {
+			const { SynologyClient } = await import('./api/client');
+			const { nasUrl, username, password, sid, syncFolder } = this.settings;
+			if (!sid) {
+				new Notice(t('notice.loginRequired'));
+				return;
+			}
+
+			const client = new SynologyClient(nasUrl, username, password);
+			(client as unknown as { sid: string }).sid = sid; // 注入现有的 sid
+
+			// 读取文件内容为二进制
+			const buffer = await this.app.vault.readBinary(activeFile);
+
+			let targetPath = `${syncFolder}/${activeFile.path}`;
+			if (!targetPath.startsWith('/mydrive/') && !targetPath.startsWith('/team-folders/')) {
+				targetPath = `/mydrive${targetPath.startsWith('/') ? '' : '/'}${targetPath}`;
+			}
+			// 移除可能存在的双斜杠
+			targetPath = targetPath.replace(/\/\//g, '/');
+
+			const n = new Notice(t('notice.uploading', { targetPath }), 0);
+			notice = n;
+			await client.uploadFile(targetPath, buffer);
+			n.setMessage(t('notice.uploadSuccess'));
+			window.setTimeout(() => n.hide(), 3000);
+		} catch (err: unknown) {
+			const errorMsg = err instanceof Error ? err.message : String(err);
+			const n = notice;
+			if (n) {
+				n.setMessage(t('notice.uploadFailed', { error: errorMsg }));
+				window.setTimeout(() => n.hide(), 5000);
+			} else {
+				new Notice(t('notice.uploadFailed', { error: errorMsg }));
+			}
+		}
+	}
+
+	async downloadActiveFile() {
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile) {
+			new Notice(t('notice.noActiveFileToDefine'));
+			return;
+		}
+
+		let notice: Notice | null = null;
+		try {
+			const { SynologyClient } = await import('./api/client');
+			const { LocalFS } = await import('./fs/local');
+			const { nasUrl, username, password, sid, syncFolder } = this.settings;
+			if (!sid) {
+				new Notice(t('notice.loginRequired'));
+				return;
+			}
+
+			const client = new SynologyClient(nasUrl, username, password);
+			(client as unknown as { sid: string }).sid = sid;
+
+			let targetPath = `${syncFolder}/${activeFile.path}`;
+			if (!targetPath.startsWith('/mydrive/') && !targetPath.startsWith('/team-folders/')) {
+				targetPath = `/mydrive${targetPath.startsWith('/') ? '' : '/'}${targetPath}`;
+			}
+			targetPath = targetPath.replace(/\/\//g, '/');
+
+			const n = new Notice(t('notice.downloading', { targetPath }), 0);
+			notice = n;
+			const buffer = await client.downloadFile(targetPath);
+			const localFs = new LocalFS(this.app);
+			await localFs.write(activeFile.path, buffer);
+			
+			n.setMessage(t('notice.downloadSuccess'));
+			window.setTimeout(() => n.hide(), 3000);
+		} catch (err: unknown) {
+			const errorMsg = err instanceof Error ? err.message : String(err);
+			const n = notice;
+			if (n) {
+				n.setMessage(t('notice.downloadFailed', { error: errorMsg }));
+				window.setTimeout(() => n.hide(), 5000);
+			} else {
+				new Notice(t('notice.downloadFailed', { error: errorMsg }));
+			}
 		}
 	}
 

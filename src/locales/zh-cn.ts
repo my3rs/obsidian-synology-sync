@@ -107,4 +107,27 @@ export default {
 	'ui.conflictModal.keepBothDesc': '保留本地文件，并将群晖文件下载为带有时间戳的副本',
 	'ui.conflictModal.btnBoth': '保留双方',
 
+	// ui/sync-status-view.ts
+	'ui.statusView.title': '单文件同步状态',
+	'ui.statusView.noFile': '当前没有活动的笔记文件',
+	'ui.statusView.statusLabel': '当前状态',
+	'ui.statusView.localSection': '本地信息',
+	'ui.statusView.localMtime': '修改时间',
+	'ui.statusView.localSize': '文件大小',
+	'ui.statusView.remoteSection': '远端信息 (Synology Drive)',
+	'ui.statusView.remoteMtime': '修改时间',
+	'ui.statusView.remoteSize': '文件大小',
+	'ui.statusView.remoteFileId': '文件 ID',
+	'ui.statusView.remoteRevId': '修订版本',
+	'ui.statusView.remoteNotFound': '远端未找到此文件',
+	'ui.statusView.btnUpload': '强制上传 (覆盖远端)',
+	'ui.statusView.btnDownload': '强制下载 (覆盖本地)',
+	'ui.statusView.stateSynced': '已同步',
+	'ui.statusView.stateUpload': '待上传',
+	'ui.statusView.stateDownload': '待下载',
+	'ui.statusView.stateConflict': '冲突',
+	'ui.statusView.stateUntracked': '未追踪',
+	'ui.statusView.loading': '正在获取信息...',
+
+	'command.toggleStatusView': '切换单文件同步状态面板',
 };

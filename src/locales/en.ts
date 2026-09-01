@@ -105,4 +105,27 @@ export default {
 	'ui.conflictModal.keepBothDesc': 'Keep local file and download NAS file as a timestamped copy',
 	'ui.conflictModal.btnBoth': 'Keep Both',
 
+	// ui/sync-status-view.ts
+	'ui.statusView.title': 'File Sync Status',
+	'ui.statusView.noFile': 'No active note file.',
+	'ui.statusView.statusLabel': 'Status',
+	'ui.statusView.localSection': 'Local Info',
+	'ui.statusView.localMtime': 'Modified',
+	'ui.statusView.localSize': 'Size',
+	'ui.statusView.remoteSection': 'Remote Info (Synology Drive)',
+	'ui.statusView.remoteMtime': 'Modified',
+	'ui.statusView.remoteSize': 'Size',
+	'ui.statusView.remoteFileId': 'File ID',
+	'ui.statusView.remoteRevId': 'Revision ID',
+	'ui.statusView.remoteNotFound': 'File not found on remote.',
+	'ui.statusView.btnUpload': 'Force Upload (Overwrite Remote)',
+	'ui.statusView.btnDownload': 'Force Download (Overwrite Local)',
+	'ui.statusView.stateSynced': 'Synced',
+	'ui.statusView.stateUpload': 'Pending Upload',
+	'ui.statusView.stateDownload': 'Pending Download',
+	'ui.statusView.stateConflict': 'Conflict',
+	'ui.statusView.stateUntracked': 'Untracked',
+	'ui.statusView.loading': 'Loading...',
+
+	'command.toggleStatusView': 'Toggle File Sync Status View',
 };
