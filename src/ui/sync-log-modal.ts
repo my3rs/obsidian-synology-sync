@@ -1,4 +1,4 @@
-import { App, Modal, Setting, Notice } from 'obsidian';
+import { App, Modal, Notice } from 'obsidian';
 import { SyncLogger, LogEntry } from '../sync/logger';
 import { t } from '../locales';
 import { ConfirmModal } from './confirm-modal';
@@ -22,33 +22,32 @@ export class SyncLogModal extends Modal {
         
         contentEl.createEl('h2', { text: t('ui.logModal.title') });
 
-        const controlsEl = contentEl.createDiv({ cls: 'sync-log-controls' });
+        const topBarEl = contentEl.createDiv({ cls: 'sync-log-topbar' });
 
-        new Setting(controlsEl)
-            .setName(t('ui.logModal.filterAll'))
-            .addDropdown(dropdown => {
-                dropdown.addOption('All', t('ui.logModal.filterAll'));
-                dropdown.addOption('Upload', t('ui.logModal.filterUpload'));
-                dropdown.addOption('Download', t('ui.logModal.filterDownload'));
-                dropdown.addOption('Delete Local', t('ui.logModal.filterDelete') + ' Local');
-                dropdown.addOption('Delete Remote', t('ui.logModal.filterDelete') + ' Remote');
-                dropdown.addOption('Conflict', t('ui.logModal.filterConflict'));
-                dropdown.addOption('Error', t('ui.logModal.filterError'));
-                dropdown.setValue(this.filterAction);
-                dropdown.onChange(value => {
-                    this.filterAction = value;
-                    this.renderLogs();
-                });
-            })
-            .addText(text => {
-                text.setPlaceholder(t('ui.logModal.searchPlaceholder'));
-                text.onChange(value => {
-                    this.searchText = value.toLowerCase();
-                    this.renderLogs();
-                });
-            });
+        const searchEl = topBarEl.createDiv({ cls: 'sync-log-search-bar' });
+        
+        searchEl.createSpan({ text: t('ui.logModal.filterAll') });
+        const filterSelect = searchEl.createEl('select', { cls: 'dropdown' });
+        filterSelect.createEl('option', { value: 'All', text: t('ui.logModal.filterAll') });
+        filterSelect.createEl('option', { value: 'Upload', text: t('ui.logModal.filterUpload') });
+        filterSelect.createEl('option', { value: 'Download', text: t('ui.logModal.filterDownload') });
+        filterSelect.createEl('option', { value: 'Delete Local', text: t('ui.logModal.filterDelete') + ' Local' });
+        filterSelect.createEl('option', { value: 'Delete Remote', text: t('ui.logModal.filterDelete') + ' Remote' });
+        filterSelect.createEl('option', { value: 'Conflict', text: t('ui.logModal.filterConflict') });
+        filterSelect.createEl('option', { value: 'Error', text: t('ui.logModal.filterError') });
+        filterSelect.value = this.filterAction;
+        filterSelect.onchange = () => {
+            this.filterAction = filterSelect.value;
+            this.renderLogs();
+        };
 
-        const btnsEl = contentEl.createDiv({ cls: 'sync-log-buttons' });
+        const searchInput = searchEl.createEl('input', { type: 'text', placeholder: t('ui.logModal.searchPlaceholder') });
+        searchInput.oninput = () => {
+            this.searchText = searchInput.value.toLowerCase();
+            this.renderLogs();
+        };
+
+        const btnsEl = topBarEl.createDiv({ cls: 'sync-log-buttons' });
 
         const btnClearWeek = btnsEl.createEl('button', { text: t('ui.logModal.clearWeek') });
         btnClearWeek.onclick = () => {

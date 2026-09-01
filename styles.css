@@ -18,15 +18,28 @@
 }
 
 /* Sync Log Modal */
-.sync-log-controls {
+.sync-log-topbar {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 10px;
+    align-items: center;
+    margin-bottom: 15px;
+    gap: 10px;
+    flex-wrap: wrap;
 }
+
+.sync-log-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sync-log-search-bar select, 
+.sync-log-search-bar input {
+    margin: 0;
+}
+
 .sync-log-buttons {
     display: flex;
-    justify-content: flex-end;
-    margin-bottom: 10px;
     gap: 10px;
 }
 .sync-log-container {
