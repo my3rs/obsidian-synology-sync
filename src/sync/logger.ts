@@ -55,4 +55,18 @@ export class SyncLogger {
         }
         return null;
     }
+
+    async clearAllLogs() {
+        this.buffer = [];
+        await this.app.vault.adapter.write(this.logPath, JSON.stringify([], null, 2));
+    }
+
+    async clearLogsBefore(timestamp: number) {
+        let logs = await this.getLogs();
+        logs = logs.filter(log => log.time >= timestamp);
+        await this.app.vault.adapter.write(this.logPath, JSON.stringify(logs, null, 2));
+        
+        // Also clean up buffer
+        this.buffer = this.buffer.filter(log => log.time >= timestamp);
+    }
 }

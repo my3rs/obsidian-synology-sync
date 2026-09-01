@@ -78,6 +78,17 @@ export default {
 	// ui/sync-log-modal.ts
 	'ui.logModal.title': 'Synology Sync Logs',
 	'ui.logModal.empty': 'No sync logs available yet.',
+	'ui.logModal.searchPlaceholder': 'Search by filename...',
+	'ui.logModal.filterAll': 'All Actions',
+	'ui.logModal.filterUpload': 'Upload',
+	'ui.logModal.filterDownload': 'Download',
+	'ui.logModal.filterDelete': 'Delete',
+	'ui.logModal.filterConflict': 'Conflict',
+	'ui.logModal.filterError': 'Error',
+	'ui.logModal.clearAll': 'Clear All Logs',
+	'ui.logModal.clearWeek': 'Clear Logs > 1 Week',
+	'ui.logModal.confirmClearAll': 'Are you sure you want to clear all sync logs? This cannot be undone.',
+	'ui.logModal.confirmClearWeek': 'Are you sure you want to clear logs older than one week? This cannot be undone.',
 
 	// ui/conflict-modal.ts
 	'ui.conflictModal.title': 'Sync Conflict Detected',

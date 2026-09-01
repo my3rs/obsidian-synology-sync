@@ -80,6 +80,17 @@ export default {
 	// ui/sync-log-modal.ts
 	'ui.logModal.title': 'Synology Sync 同步日志',
 	'ui.logModal.empty': '暂无同步记录。',
+	'ui.logModal.searchPlaceholder': '搜索文件名...',
+	'ui.logModal.filterAll': '所有操作',
+	'ui.logModal.filterUpload': '上传',
+	'ui.logModal.filterDownload': '下载',
+	'ui.logModal.filterDelete': '删除',
+	'ui.logModal.filterConflict': '冲突',
+	'ui.logModal.filterError': '错误',
+	'ui.logModal.clearAll': '清空所有日志',
+	'ui.logModal.clearWeek': '清空一周前日志',
+	'ui.logModal.confirmClearAll': '确定要清空所有同步日志吗？此操作不可恢复。',
+	'ui.logModal.confirmClearWeek': '确定要清空一周前的同步日志吗？此操作不可恢复。',
 
 	// ui/conflict-modal.ts
 	'ui.conflictModal.title': '发现同步冲突',

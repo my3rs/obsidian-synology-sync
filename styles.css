@@ -18,6 +18,17 @@
 }
 
 /* Sync Log Modal */
+.sync-log-controls {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.sync-log-buttons {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+    gap: 10px;
+}
 .sync-log-container {
     max-height: 400px;
     overflow-y: auto;
