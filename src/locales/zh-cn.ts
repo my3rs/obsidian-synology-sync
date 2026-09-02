@@ -114,7 +114,7 @@ export default {
 	'ui.statusView.localSection': '本地信息',
 	'ui.statusView.localMtime': '修改时间',
 	'ui.statusView.localSize': '文件大小',
-	'ui.statusView.remoteSection': '远端信息 (Synology Drive)',
+	'ui.statusView.remoteSection': '远端信息',
 	'ui.statusView.remoteMtime': '修改时间',
 	'ui.statusView.remoteSize': '文件大小',
 	'ui.statusView.remoteFileId': '文件 ID',

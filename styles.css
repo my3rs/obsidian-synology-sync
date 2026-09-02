@@ -107,10 +107,14 @@
     height: 16px;
 }
 
-.synology-sync-status-view h4 {
-    margin-top: 15px;
-    margin-bottom: 5px;
+.sync-status-section-header {
+    font-weight: 600;
+    margin-top: 20px;
+    margin-bottom: 8px;
     color: var(--text-normal);
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: 4px;
+    font-size: 1.05em;
 }
 
 .synology-sync-status-view ul {

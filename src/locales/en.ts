@@ -112,7 +112,7 @@ export default {
 	'ui.statusView.localSection': 'Local Info',
 	'ui.statusView.localMtime': 'Modified',
 	'ui.statusView.localSize': 'Size',
-	'ui.statusView.remoteSection': 'Remote Info (Synology Drive)',
+	'ui.statusView.remoteSection': 'Remote Info',
 	'ui.statusView.remoteMtime': 'Modified',
 	'ui.statusView.remoteSize': 'Size',
 	'ui.statusView.remoteFileId': 'File ID',

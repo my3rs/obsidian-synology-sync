@@ -126,13 +126,13 @@ export class SyncStatusView extends ItemView {
         valEl.createSpan({ text: ` ${statusText}` });
 
         // Local Info
-        contentEl.createEl('h4', { text: t('ui.statusView.localSection') });
+        contentEl.createDiv({ text: t('ui.statusView.localSection'), cls: 'sync-status-section-header' });
         const localInfoEl = contentEl.createEl('ul');
         localInfoEl.createEl('li', { text: `${t('ui.statusView.localMtime')}: ${new Date(localMtime).toLocaleString()}` });
         localInfoEl.createEl('li', { text: `${t('ui.statusView.localSize')}: ${this.formatBytes(localSize)}` });
 
         // Remote Info
-        contentEl.createEl('h4', { text: t('ui.statusView.remoteSection') });
+        contentEl.createDiv({ text: t('ui.statusView.remoteSection'), cls: 'sync-status-section-header' });
         if (dataObj) {
             const remoteInfoEl = contentEl.createEl('ul');
             if (remoteMtime) {
