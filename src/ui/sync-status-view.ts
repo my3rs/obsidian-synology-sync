@@ -42,6 +42,11 @@ export class SyncStatusView extends ItemView {
                 void this.render();
             })
         );
+        this.registerEvent(
+            this.app.workspace.on('synology-sync:sync-completed' as 'file-open', () => {
+                void this.render();
+            })
+        );
         void this.render();
     }
 

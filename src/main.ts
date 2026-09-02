@@ -296,6 +296,7 @@ export default class SynologySyncPlugin extends Plugin {
 					window.setTimeout(() => syncNotice!.hide(), 3000);
 				}
 			}
+			this.app.workspace.trigger('synology-sync:sync-completed');
 		} catch (err: unknown) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
 			this.updateStatusBar('error');
@@ -322,6 +323,7 @@ export default class SynologySyncPlugin extends Plugin {
 			void this.saveSettings();
 			this.updateStatusBar('idle');
 			new Notice(t('notice.forceUploadSuccess'));
+			this.app.workspace.trigger('synology-sync:sync-completed');
 		} catch (e: unknown) {
 			const errorMsg = e instanceof Error ? e.message : String(e);
 			console.error('[SynologySync] 强制上传失败:', e);
@@ -343,6 +345,7 @@ export default class SynologySyncPlugin extends Plugin {
 			void this.saveSettings();
 			this.updateStatusBar('idle');
 			new Notice(t('notice.forceDownloadSuccess'));
+			this.app.workspace.trigger('synology-sync:sync-completed');
 		} catch (e: unknown) {
 			const errorMsg = e instanceof Error ? e.message : String(e);
 			console.error('[SynologySync] 强制下载失败:', e);
@@ -408,6 +411,7 @@ export default class SynologySyncPlugin extends Plugin {
 			await client.uploadFile(targetPath, buffer);
 			n.setMessage(t('notice.uploadSuccess'));
 			window.setTimeout(() => n.hide(), 3000);
+			this.app.workspace.trigger('synology-sync:sync-completed');
 		} catch (err: unknown) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
 			const n = notice;
@@ -454,6 +458,7 @@ export default class SynologySyncPlugin extends Plugin {
 			
 			n.setMessage(t('notice.downloadSuccess'));
 			window.setTimeout(() => n.hide(), 3000);
+			this.app.workspace.trigger('synology-sync:sync-completed');
 		} catch (err: unknown) {
 			const errorMsg = err instanceof Error ? err.message : String(err);
 			const n = notice;
