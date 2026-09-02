@@ -83,18 +83,19 @@
 }
 
 .sync-status-indicator {
-    margin: 15px 0;
-    padding: 10px;
-    background-color: var(--background-secondary);
-    border-radius: 4px;
+    margin: 20px 0 15px 0;
     display: flex;
     align-items: center;
+    font-size: 1.05em;
+    font-weight: 600;
+    color: var(--text-normal);
 }
 
 .sync-status-value {
     display: inline-flex;
     align-items: center;
     margin-left: 6px;
+    font-weight: normal;
 }
 
 .sync-status-icon {
