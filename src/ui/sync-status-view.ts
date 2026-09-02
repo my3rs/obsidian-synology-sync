@@ -66,8 +66,7 @@ export class SyncStatusView extends ItemView {
             return;
         }
 
-        const headerEl = contentEl.createEl('h3', { text: activeFile.name });
-        headerEl.addClass('sync-status-header');
+        contentEl.createDiv({ text: activeFile.name, cls: 'sync-status-header' });
 
         const loadingEl = contentEl.createDiv({ text: t('ui.statusView.loading'), cls: 'sync-status-loading' });
 
