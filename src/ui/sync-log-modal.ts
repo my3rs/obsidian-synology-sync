@@ -20,7 +20,7 @@ export class SyncLogModal extends Modal {
         contentEl.empty();
         contentEl.addClass('sync-log-modal-wrapper');
         
-        contentEl.createEl('h2', { text: t('ui.logModal.title') });
+        this.titleEl.setText(t('ui.logModal.title'));
 
         const topBarEl = contentEl.createDiv({ cls: 'sync-log-topbar' });
 
