@@ -109,7 +109,7 @@ export class ManifestManager {
             const content = this.bufferToString(buffer);
             if (content) {
                 const parsed = JSON.parse(content) as unknown;
-                if (parsed && typeof parsed === 'object' && 'schemaVersion' in parsed && (parsed as any).schemaVersion === 1) {
+                if (parsed && typeof parsed === 'object' && 'schemaVersion' in parsed && (parsed as Record<string, unknown>).schemaVersion === 1) {
                     return parsed as SyncManifest;
                 }
             }
