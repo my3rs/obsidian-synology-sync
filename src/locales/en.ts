@@ -70,6 +70,18 @@ export default {
 	'settings.rebuild.btn': 'Rebuild State',
 	'settings.rebuild.confirm': 'Are you sure you want to forcibly rebuild the sync state snapshot?',
 
+	'settings.initialSync.title': 'First Time Sync Setup',
+	'settings.initialSync.desc': 'This is your first time connecting to this NAS. How do you want to initialize the sync?',
+	'settings.initialSync.upload.name': 'Upload Local to Remote',
+	'settings.initialSync.upload.desc': 'Use your local vault as the source of truth. All files will be uploaded to the NAS.',
+	'settings.initialSync.upload.btn': 'Upload Local',
+	'settings.initialSync.download.name': 'Download Remote to Local',
+	'settings.initialSync.download.desc': 'Use the NAS vault as the source of truth. All files will be downloaded to your local device.',
+	'settings.initialSync.download.btn': 'Download Remote',
+	'settings.initialSync.skip.name': 'Skip Initial Sync',
+	'settings.initialSync.skip.desc': 'Proceed with normal sync. Files will be merged based on their status.',
+	'settings.initialSync.skip.btn': 'Skip (Normal Sync)',
+
 	// engine.ts
 	'notice.engine.syncing': 'Syncing...',
 	'notice.engine.syncSuccess': 'Sync Successful',

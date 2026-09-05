@@ -72,6 +72,18 @@ export default {
 	'settings.rebuild.btn': '重建状态',
 	'settings.rebuild.confirm': '确认要强制重建同步状态快照吗？',
 
+	'settings.initialSync.title': '首次同步设置',
+	'settings.initialSync.desc': '这是您首次连接到此群晖。您希望如何初始化同步？',
+	'settings.initialSync.upload.name': '上传本地到远端',
+	'settings.initialSync.upload.desc': '以本地库为准。所有本地文件将被上传并覆盖到群晖。',
+	'settings.initialSync.upload.btn': '上传本地',
+	'settings.initialSync.download.name': '下载远端到本地',
+	'settings.initialSync.download.desc': '以群晖库为准。所有远端文件将被下载并覆盖到您的本地设备。',
+	'settings.initialSync.download.btn': '下载远端',
+	'settings.initialSync.skip.name': '跳过初始同步',
+	'settings.initialSync.skip.desc': '执行普通同步，文件将根据其状态进行自动合并。',
+	'settings.initialSync.skip.btn': '跳过 (普通同步)',
+
 	// engine.ts
 	'notice.engine.syncing': '正在同步...',
 	'notice.engine.syncSuccess': '同步成功',

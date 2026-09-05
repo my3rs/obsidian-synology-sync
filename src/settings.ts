@@ -59,6 +59,64 @@ class ConfirmModal extends Modal {
 	}
 }
 
+class InitialSyncModal extends Modal {
+	plugin: SynologySyncPlugin;
+
+	constructor(app: App, plugin: SynologySyncPlugin) {
+		super(app);
+		this.plugin = plugin;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl('h2', { text: t('settings.initialSync.title') });
+		contentEl.createEl('p', { text: t('settings.initialSync.desc') });
+
+		new Setting(contentEl)
+			.setName(t('settings.initialSync.upload.name'))
+			.setDesc(t('settings.initialSync.upload.desc'))
+			.addButton((btn) =>
+				btn
+					.setButtonText(t('settings.initialSync.upload.btn'))
+					.setCta()
+					.onClick(() => {
+						this.close();
+						void this.plugin.doForceUpload();
+					})
+			);
+
+		new Setting(contentEl)
+			.setName(t('settings.initialSync.download.name'))
+			.setDesc(t('settings.initialSync.download.desc'))
+			.addButton((btn) =>
+				btn
+					.setButtonText(t('settings.initialSync.download.btn'))
+					.setCta()
+					.onClick(() => {
+						this.close();
+						void this.plugin.doForceDownload();
+					})
+			);
+
+		new Setting(contentEl)
+			.setName(t('settings.initialSync.skip.name'))
+			.setDesc(t('settings.initialSync.skip.desc'))
+			.addButton((btn) =>
+				btn
+					.setButtonText(t('settings.initialSync.skip.btn'))
+					.onClick(() => {
+						this.close();
+					})
+			);
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+
 
 // @ts-ignore TS2515: display() is intentionally omitted as it is deprecated in Obsidian 1.13.0+ but still required by older typings
 export class SynologySyncSettingTab extends PluginSettingTab {
@@ -167,6 +225,7 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 								const client = new SynologyClient(nasUrl, username, password, otpCode);
 								
 								try {
+									const isFirstLogin = !this.plugin.settings.lastSyncTime;
 									const sid = await client.login();
 									this.plugin.settings.sid = sid;
 									this.plugin.settings.otpCode = ''; // 登录成功后清空一次性验证码
@@ -176,6 +235,10 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 									// 强制刷新设置界面
 									// 在 Obsidian 1.13+ 的声明式设置中，调用 this.update() 即可刷新
 									(this as unknown as { update: () => void }).update();
+
+									if (isFirstLogin) {
+										new InitialSyncModal(this.app, this.plugin).open();
+									}
 								} catch (err: unknown) {
 									const errorMsg = err instanceof Error ? err.message : String(err);
 									new Notice(t('notice.connFailed', { error: errorMsg }));
