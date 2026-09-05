@@ -7,7 +7,19 @@ import { SyncLogger } from './logger';
 import { t } from '../locales';
 import { ManifestManager, SyncManifest } from './manifest';
 import { computeSyncPlan, LocalFileInfo, SyncPlan } from './differ';
-import { ConflictResolutionModal } from '../ui/conflict-modal';
+
+async function runConcurrent<T>(items: Iterable<T>, concurrency: number, task: (item: T) => Promise<void>) {
+    const queue = Array.from(items);
+    const workers = new Array(concurrency).fill(null).map(async () => {
+        while (queue.length > 0) {
+            const item = queue.shift();
+            if (item) {
+                await task(item);
+            }
+        }
+    });
+    await Promise.all(workers);
+}
 
 export class SyncEngine {
     private localFs: LocalFS;
@@ -104,7 +116,7 @@ export class SyncEngine {
             const hasChanges = await this.executePlan(plan, manifest, deviceId, localFiles);
             
             if (hasChanges) {
-                await this.manifestManager.uploadManifest(manifest);
+                await this.manifestManager.uploadManifest(manifest, deviceId);
                 await this.state.save();
             }
             
@@ -172,7 +184,7 @@ export class SyncEngine {
             }
 
             await this.executePlan(plan, manifest, deviceId, localFiles);
-            await this.manifestManager.uploadManifest(manifest);
+            await this.manifestManager.uploadManifest(manifest, deviceId);
             await this.state.save();
             return true;
         } finally {
@@ -206,24 +218,31 @@ export class SyncEngine {
                 snapshotUpdates: new Map()
             };
 
+            const remoteFiles = await this.fetchRemoteFileList();
+            for (const path of remoteFiles) {
+                plan.downloads.add(path);
+            }
+            
+            // Also add any files from manifest that are not marked as deleted, just in case search missed them
             for (const [path, entry] of Object.entries(manifest.files)) {
-                if (!entry.deleted) {
+                if (!entry.deleted && !plan.downloads.has(path)) {
                     plan.downloads.add(path);
                 }
             }
 
-            if (Object.keys(manifest.files).length === 0) {
-                console.warn("Remote manifest is empty. Skipping local deletions.");
+            if (Object.keys(manifest.files).length === 0 && remoteFiles.size === 0) {
+                console.warn("Remote manifest and remote folder are empty. Skipping local deletions for safety.");
             } else {
                 for (const path of localFiles.keys()) {
-                    if (!manifest.files[path] || manifest.files[path].deleted) {
+                    const inManifestAndNotDeleted = manifest.files[path] && !manifest.files[path].deleted;
+                    if (!remoteFiles.has(path) && !inManifestAndNotDeleted) {
                         plan.deletionsLocal.add(path);
                     }
                 }
             }
 
             await this.executePlan(plan, manifest, deviceId, localFiles);
-            await this.manifestManager.uploadManifest(manifest);
+            await this.manifestManager.uploadManifest(manifest, deviceId);
             await this.state.save();
             return true;
         } finally {
@@ -234,8 +253,70 @@ export class SyncEngine {
 
     async rebuildSyncState(): Promise<boolean> {
         this.state.clear();
+        const localFiles = await this.detectLocalChanges();
+        const remoteFiles = await this.fetchRemoteFileList();
+        
+        let manifest: SyncManifest;
+        try {
+            manifest = await this.manifestManager.downloadManifest();
+        } catch {
+            manifest = { schemaVersion: 1, files: {} };
+        }
+        
+        const deviceId = this.state.getDeviceId();
+        
+        for (const [path, localInfo] of localFiles.entries()) {
+            if (remoteFiles.has(path)) {
+                const rev = (manifest.files[path]?.rev || 0) + 1;
+                const file = this.app.vault.getAbstractFileByPath(path);
+                const size = file instanceof TFile ? file.stat.size : 0;
+                
+                manifest.files[path] = {
+                    rev,
+                    hash: localInfo.hash,
+                    size,
+                    updatedBy: deviceId,
+                    updatedAt: Date.now()
+                };
+                
+                this.state.updateFileState(path, {
+                    localMtime: localInfo.mtime,
+                    localHash: localInfo.hash,
+                    syncedRev: rev,
+                    syncedHash: localInfo.hash
+                });
+            }
+        }
+        
+        await this.manifestManager.uploadManifest(manifest, deviceId);
         await this.state.save();
+        
         return await this.runSync(true);
+    }
+
+    private async fetchRemoteFileList(): Promise<Set<string>> {
+        const remoteFiles = new Set<string>();
+        try {
+            const res = await this.client.search(this.remoteFolder, 'file') as { data?: { items?: Array<{ path?: string }> } };
+            if (res && res.data && Array.isArray(res.data.items)) {
+                for (const item of res.data.items) {
+                    let remotePath = item.path;
+                    if (typeof remotePath !== 'string') continue;
+                    // convert remotePath to localPath
+                    if (remotePath.startsWith(this.remoteFolder)) {
+                        let localPath = remotePath.substring(this.remoteFolder.length);
+                        if (localPath.startsWith('/')) localPath = localPath.substring(1);
+                        // Filter out hidden files and lock/manifest
+                        if (localPath && !localPath.startsWith('.') && !localPath.includes('/.')) {
+                            remoteFiles.add(localPath);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`[SynologySync] Failed to fetch remote file list:`, e);
+        }
+        return remoteFiles;
     }
 
     private async detectLocalChanges(): Promise<Map<string, LocalFileInfo>> {
@@ -296,15 +377,14 @@ export class SyncEngine {
         }
 
         // Uploads
-        for (const path of uploads) {
-            const file = this.app.vault.getAbstractFileByPath(path);
-            if (file instanceof TFile) {
-                try {
+        await runConcurrent(uploads, 3, async (path) => {
+            try {
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (file instanceof TFile) {
                     const buffer = await this.app.vault.readBinary(file);
                     await this.client.uploadFile(this.toRemotePath(path), buffer);
                     
-                    const localInfo = localFiles.get(path);
-                    const localHash = localInfo ? localInfo.hash : await calculateSHA256(buffer);
+                    const localHash = localFiles.get(path)?.hash || await calculateSHA256(buffer);
                     
                     const rev = (manifest.files[path]?.rev || 0) + 1;
                     manifest.files[path] = {
@@ -324,16 +404,16 @@ export class SyncEngine {
                     
                     await this.logger.addLog({ action: 'Upload', file: path });
                     hasChanges = true;
-                } catch (e: unknown) {
-                    const errorMsg = e instanceof Error ? e.message : String(e);
-                    console.error(`[SynologySync] Error uploading file ${path}:`, e);
-                    await this.logger.addLog({ action: 'Error', file: path, details: errorMsg });
                 }
+            } catch (e: unknown) {
+                const errorMsg = e instanceof Error ? e.message : String(e);
+                console.error(`[SynologySync] Error uploading file ${path}:`, e);
+                await this.logger.addLog({ action: 'Error', file: path, details: errorMsg });
             }
-        }
+        });
 
         // Downloads
-        for (const path of downloads) {
+        await runConcurrent(downloads, 3, async (path) => {
             try {
                 const buffer = await this.client.downloadFile(this.toRemotePath(path));
                 await this.localFs.write(path, buffer);
@@ -355,7 +435,7 @@ export class SyncEngine {
                 console.error(`[SynologySync] Error downloading file ${path}:`, e);
                 await this.logger.addLog({ action: 'Error', file: path, details: errorMsg });
             }
-        }
+        });
 
         // Deletions (Remote)
         for (const path of deletionsRemote) {
@@ -385,64 +465,21 @@ export class SyncEngine {
 
         // Conflicts
         for (const path of conflicts) {
-            const localInfo = localFiles.get(path);
-            const manifestEntry = manifest.files[path];
-            
-            const localMtime = localInfo ? localInfo.mtime : 0;
-            const remoteMtime = manifestEntry ? manifestEntry.updatedAt : 0;
-            
-            const modal = new ConflictResolutionModal(this.app, path, localMtime, remoteMtime);
-            const resolution = await modal.waitForResolution();
-
-            if (resolution === 'local') {
-                const file = this.app.vault.getAbstractFileByPath(path);
-                if (file instanceof TFile) {
-                    const buffer = await this.app.vault.readBinary(file);
-                    await this.client.uploadFile(this.toRemotePath(path), buffer);
-                    
-                    const localHash = localInfo ? localInfo.hash : await calculateSHA256(buffer);
-                    const rev = (manifest.files[path]?.rev || 0) + 1;
-                    manifest.files[path] = {
-                        rev,
-                        hash: localHash,
-                        size: file.stat.size,
-                        updatedBy: deviceId,
-                        updatedAt: Date.now()
-                    };
-                    this.state.updateFileState(path, {
-                        localMtime: file.stat.mtime,
-                        localHash,
-                        syncedRev: rev,
-                        syncedHash: localHash
-                    });
-                    await this.logger.addLog({ action: 'Conflict', file: path, details: 'Resolved: Keep Local' });
-                    hasChanges = true;
-                }
-            } else if (resolution === 'remote') {
-                const buffer = await this.client.downloadFile(this.toRemotePath(path));
-                await this.localFs.write(path, buffer);
+            try {
+                const localInfo = localFiles.get(path);
+                const manifestEntry = manifest.files[path];
                 
-                const file = this.app.vault.getAbstractFileByPath(path);
-                if (file instanceof TFile) {
-                    this.state.updateFileState(path, {
-                        localMtime: file.stat.mtime,
-                        localHash: manifestEntry!.hash,
-                        syncedRev: manifestEntry!.rev,
-                        syncedHash: manifestEntry!.hash
-                    });
-                }
-                await this.logger.addLog({ action: 'Conflict', file: path, details: 'Resolved: Keep Remote' });
-                hasChanges = true;
-            } else {
-                // 'both': keep local, download remote as copy
+                // Automated resolution: keep local, download remote as conflict copy
                 const buffer = await this.client.downloadFile(this.toRemotePath(path));
                 
                 const extIdx = path.lastIndexOf('.');
                 const base = extIdx > -1 ? path.substring(0, extIdx) : path;
                 const ext = extIdx > -1 ? path.substring(extIdx) : '';
                 const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-                const shortDeviceId = deviceId.slice(0, 6);
-                const conflictPath = `${base} (Conflict ${ts} ${shortDeviceId})${ext}`;
+                
+                // If manifestEntry is missing, remote was modified from unknown device
+                const remoteDeviceId = manifestEntry ? manifestEntry.updatedBy.slice(0, 6) : 'unknown';
+                const conflictPath = `${base} (Conflict ${ts} ${remoteDeviceId})${ext}`;
                 
                 await this.localFs.write(conflictPath, buffer);
                 
@@ -467,10 +504,16 @@ export class SyncEngine {
                         syncedRev: rev,
                         syncedHash: localHash
                     });
-                    
-                    await this.logger.addLog({ action: 'Conflict', file: path, details: `Resolved: Both. Kept local, saved remote as ${conflictPath}` });
-                    hasChanges = true;
                 }
+                
+                const logMsg = `Auto-resolved: Kept local, saved remote as ${conflictPath}`;
+                await this.logger.addLog({ action: 'Conflict', file: path, details: logMsg });
+                new Notice(`Sync Conflict: ${path}\n${logMsg}`);
+                hasChanges = true;
+            } catch (e: unknown) {
+                const errorMsg = e instanceof Error ? e.message : String(e);
+                console.error(`[SynologySync] Error resolving conflict for ${path}:`, e);
+                await this.logger.addLog({ action: 'Error', file: path, details: `Conflict resolution failed: ${errorMsg}` });
             }
         }
         
