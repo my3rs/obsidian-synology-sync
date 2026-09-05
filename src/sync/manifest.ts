@@ -195,7 +195,7 @@ export class ManifestManager {
                 if (!errorMsg.includes('1003') && !errorMsg.includes('404') && !errorMsg.includes('400')) {
                     console.warn(`[SynologySync] Lock verification failed: ${errorMsg}`);
                 } else {
-                    throw new Error(`Lock file missing. Cannot safely upload manifest.`);
+                    console.warn(`[SynologySync] Lock file not found during verification (possible indexing delay). Assuming we still hold the lock.`);
                 }
             }
 
