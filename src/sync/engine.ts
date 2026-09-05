@@ -241,6 +241,7 @@ export class SyncEngine {
     private async detectLocalChanges(): Promise<Map<string, LocalFileInfo>> {
         const localFiles = new Map<string, LocalFileInfo>();
         const allFiles = this.app.vault.getFiles();
+        const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
         for (const file of allFiles) {
             if (file.path.startsWith(this.app.vault.configDir + '/')) continue;
@@ -249,6 +250,15 @@ export class SyncEngine {
             
             const state = this.state.getFileState(file.path);
             const currentMtime = file.stat.mtime;
+
+            if (file.stat.size > MAX_FILE_SIZE) {
+                console.warn(`[SynologySync] Skipping large file: ${file.path} (${(file.stat.size / 1024 / 1024).toFixed(2)} MB)`);
+                if (state) {
+                    // Retain old state so it doesn't get deleted remotely
+                    localFiles.set(file.path, { hash: state.localHash, mtime: state.localMtime });
+                }
+                continue;
+            }
 
             if (!state) {
                 const buffer = await this.app.vault.readBinary(file);
