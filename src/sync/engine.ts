@@ -296,25 +296,31 @@ export class SyncEngine {
 
     private async fetchRemoteFileList(): Promise<Set<string>> {
         const remoteFiles = new Set<string>();
-        try {
-            const res = await this.client.search(this.remoteFolder, 'file') as { data?: { items?: Array<{ path?: string }> } };
-            if (res && res.data && Array.isArray(res.data.items)) {
-                for (const item of res.data.items) {
-                    let remotePath = item.path;
-                    if (typeof remotePath !== 'string') continue;
-                    // convert remotePath to localPath
-                    if (remotePath.startsWith(this.remoteFolder)) {
-                        let localPath = remotePath.substring(this.remoteFolder.length);
-                        if (localPath.startsWith('/')) localPath = localPath.substring(1);
-                        // Filter out hidden files and lock/manifest
-                        if (localPath && !localPath.startsWith('.') && !localPath.includes('/.')) {
-                            remoteFiles.add(localPath);
+        const queue: string[] = [this.remoteFolder];
+        
+        while (queue.length > 0) {
+            const currentFolder = queue.shift()!;
+            try {
+                const res = await this.client.listFiles(currentFolder) as { data?: { items?: Array<{ path: string, isdir: boolean, name: string }> } };
+                if (res && res.data && Array.isArray(res.data.items)) {
+                    for (const item of res.data.items) {
+                        if (item.isdir) {
+                            queue.push(item.path);
+                        } else {
+                            const remotePath = item.path;
+                            if (remotePath.startsWith(this.remoteFolder)) {
+                                let localPath = remotePath.substring(this.remoteFolder.length);
+                                if (localPath.startsWith('/')) localPath = localPath.substring(1);
+                                if (localPath && !localPath.startsWith('.') && !localPath.includes('/.')) {
+                                    remoteFiles.add(localPath);
+                                }
+                            }
                         }
                     }
                 }
+            } catch (e) {
+                console.error(`[SynologySync] Failed to list remote folder ${currentFolder}:`, e);
             }
-        } catch (e) {
-            console.error(`[SynologySync] Failed to fetch remote file list:`, e);
         }
         return remoteFiles;
     }
