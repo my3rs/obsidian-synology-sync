@@ -109,18 +109,25 @@ export class ManifestManager {
             const content = this.bufferToString(buffer);
             if (content) {
                 const parsed = JSON.parse(content) as unknown;
-                if (parsed && typeof parsed === 'object' && 'schemaVersion' in parsed && parsed.schemaVersion === 1) {
+                if (parsed && typeof parsed === 'object' && 'schemaVersion' in parsed && (parsed as any).schemaVersion === 1) {
                     return parsed as SyncManifest;
                 }
             }
         } catch (e: unknown) {
             const errorMsg = e instanceof Error ? e.message : String(e);
-            if (!errorMsg.includes('1003') && !errorMsg.includes('404')) {
-                console.error(`[SynologySync] Failed to download manifest:`, e);
+            // 1003 and 404 mean file not found. In this case, return an empty manifest.
+            if (errorMsg.includes('1003') || errorMsg.includes('404')) {
+                return {
+                    schemaVersion: 1,
+                    files: {}
+                };
             }
+            // For actual network errors or parsing errors, we MUST throw to prevent disastrous local deletions.
+            console.error(`[SynologySync] Failed to download manifest:`, e);
+            throw e;
         }
         
-        // Return empty manifest if not found or invalid
+        // Return empty manifest if parsing fails but no exception was thrown (e.g. invalid format but downloaded successfully)
         return {
             schemaVersion: 1,
             files: {}
