@@ -335,9 +335,6 @@ export class SynologyClient {
 		const encoder = new TextEncoder();
 		const parts: Uint8Array[] = [];
 
-		const filename = path.split('/').pop() || 'upload.bin';
-		const parentPath = path.substring(0, path.lastIndexOf('/')) || '/mydrive';
-
 		const appendField = (name: string, value: string) => {
 			parts.push(encoder.encode(`--${boundary}\r\n`));
 			parts.push(encoder.encode(`Content-Disposition: form-data; name="${name}"\r\n\r\n`));
@@ -345,10 +342,11 @@ export class SynologyClient {
 		};
 
 		appendField('type', 'file');
-		appendField('path', parentPath);
+		appendField('path', path);
 		appendField('conflict_action', 'overwrite');
 
 		parts.push(encoder.encode(`--${boundary}\r\n`));
+		const filename = path.split('/').pop() || 'upload.bin';
 		parts.push(encoder.encode(`Content-Disposition: form-data; name="file"; filename="${encodeURIComponent(filename)}"\r\n`));
 		parts.push(encoder.encode(`Content-Type: application/octet-stream\r\n\r\n`));
 		parts.push(new Uint8Array(buffer));
