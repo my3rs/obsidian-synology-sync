@@ -30,6 +30,8 @@ const LOCK_FILENAME = '.sync_lock';
 const TOMBSTONE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export class ManifestManager {
+    private heartbeatTimer: number | null = null;
+
     constructor(
         private client: SynologyClient,
         private remoteFolder: string
@@ -68,7 +70,7 @@ export class ManifestManager {
             } catch (e: unknown) {
                 // Ignore download error, probably lock doesn't exist
                 const errorMsg = e instanceof Error ? e.message : String(e);
-                if (!errorMsg.includes('1003') && !errorMsg.includes('404')) {
+                if (!errorMsg.includes('1003') && !errorMsg.includes('404') && !errorMsg.includes('400')) {
                     // 1003 is often "File not found" in Synology API
                     console.warn(`[SynologySync] Error reading lock file, assuming not locked: ${errorMsg}`);
                 }
@@ -84,6 +86,7 @@ export class ManifestManager {
             
             try {
                 await this.client.uploadFile(this.toRemotePath(LOCK_FILENAME), this.stringToBuffer(JSON.stringify(newLock)));
+                this.startHeartbeat(deviceId);
                 return true;
             } catch (e: unknown) {
                 console.error(`[SynologySync] Failed to write lock file:`, e);
@@ -96,10 +99,51 @@ export class ManifestManager {
     }
 
     async releaseLock(deviceId: string): Promise<void> {
+        this.stopHeartbeat();
         try {
+            // Verify lock ownership before releasing
+            const lockBuffer = await this.client.downloadFile(this.toRemotePath(LOCK_FILENAME));
+            const lockContent = this.bufferToString(lockBuffer);
+            if (lockContent) {
+                const lockData = JSON.parse(lockContent) as LockFile;
+                if (lockData.deviceId !== deviceId) {
+                    console.warn(`[SynologySync] Cannot release lock: held by ${lockData.deviceId}`);
+                    return;
+                }
+            }
             await this.client.deleteFile(this.toRemotePath(LOCK_FILENAME));
-        } catch (e) {
-            console.error(`[SynologySync] Failed to release lock:`, e);
+        } catch (e: unknown) {
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            if (!errorMsg.includes('1003') && !errorMsg.includes('404') && !errorMsg.includes('400')) {
+                console.error(`[SynologySync] Failed to release lock:`, e);
+            }
+        }
+    }
+
+    startHeartbeat(deviceId: string) {
+        this.stopHeartbeat();
+        // Renew lock every half of TTL
+        this.heartbeatTimer = window.setInterval(() => {
+            void (async () => {
+                try {
+                    const now = Date.now();
+                    const newLock: LockFile = {
+                        deviceId,
+                        lockedAt: now, // We can just update lockedAt to now
+                        expiresAt: now + LOCK_TTL
+                    };
+                    await this.client.uploadFile(this.toRemotePath(LOCK_FILENAME), this.stringToBuffer(JSON.stringify(newLock)));
+                } catch (e) {
+                    console.warn(`[SynologySync] Failed to renew lock heartbeat:`, e);
+                }
+            })();
+        }, Math.floor(LOCK_TTL / 2));
+    }
+
+    stopHeartbeat() {
+        if (this.heartbeatTimer !== null) {
+            window.clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
         }
     }
 
@@ -115,8 +159,8 @@ export class ManifestManager {
             }
         } catch (e: unknown) {
             const errorMsg = e instanceof Error ? e.message : String(e);
-            // 1003 and 404 mean file not found. In this case, return an empty manifest.
-            if (errorMsg.includes('1003') || errorMsg.includes('404')) {
+            // 1003, 404, and sometimes 400 mean file not found. In this case, return an empty manifest.
+            if (errorMsg.includes('1003') || errorMsg.includes('404') || errorMsg.includes('400')) {
                 return {
                     schemaVersion: 1,
                     files: {}
@@ -134,8 +178,27 @@ export class ManifestManager {
         };
     }
 
-    async uploadManifest(manifest: SyncManifest): Promise<void> {
+    async uploadManifest(manifest: SyncManifest, deviceId: string): Promise<void> {
         try {
+            // Verify lock ownership before uploading manifest
+            try {
+                const lockBuffer = await this.client.downloadFile(this.toRemotePath(LOCK_FILENAME));
+                const lockContent = this.bufferToString(lockBuffer);
+                if (lockContent) {
+                    const lockData = JSON.parse(lockContent) as LockFile;
+                    if (lockData.deviceId !== deviceId) {
+                        throw new Error(`Lock stolen by ${lockData.deviceId}. Cannot safely upload manifest.`);
+                    }
+                }
+            } catch (e: unknown) {
+                const errorMsg = e instanceof Error ? e.message : String(e);
+                if (!errorMsg.includes('1003') && !errorMsg.includes('404') && !errorMsg.includes('400')) {
+                    console.warn(`[SynologySync] Lock verification failed: ${errorMsg}`);
+                } else {
+                    throw new Error(`Lock file missing. Cannot safely upload manifest.`);
+                }
+            }
+
             this.cleanupTombstones(manifest);
             const content = JSON.stringify(manifest);
             await this.client.uploadFile(this.toRemotePath(MANIFEST_FILENAME), this.stringToBuffer(content));
