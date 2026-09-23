@@ -3,8 +3,14 @@ import { t } from '../locales';
 /** Synology Drive v2 ID-system paths; never prepend /mydrive to an explicit root. */
 export function normalizeRemoteFolder(value: string): string {
     const path = value.trim().replace(/\/+/g, '/').replace(/\/$/, '');
+    if (!path) return '/mydrive';
     if (/^(?:id:|link:)/.test(path)) return path;
-    if (/^\/(?:mydrive|team-folders|views|volumes)(?:\/|$)/.test(path)) return path;
+    
+    // Allow omission of leading slash for built-in prefixes
+    if (/^\/?(?:mydrive|team-folders|views|volumes)(?:\/|$)/.test(path)) {
+        return path.startsWith('/') ? path : `/${path}`;
+    }
+    
     return `/mydrive${path.startsWith('/') ? '' : '/'}${path}`.replace(/\/$/, '');
 }
 

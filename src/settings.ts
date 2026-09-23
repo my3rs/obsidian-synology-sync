@@ -205,15 +205,36 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 						name: t('settings.syncFolder.name'),
 						description: t('settings.syncFolder.desc'),
 						render: (setting: Setting) => {
-							setting.addText((text) =>
+							setting.addText((text) => {
 								text
 									.setPlaceholder('/obsidiansync')
 									.setValue(this.plugin.settings.syncFolder)
 									.onChange(async (value) => {
 										this.plugin.settings.syncFolder = value;
 										await this.plugin.saveSettings();
-									})
-							);
+									});
+								
+								setting.addButton((btn) => {
+									btn.setButtonText((t('settings.syncFolder.browse') as string) || 'Browse')
+									   .onClick(async () => {
+										   if (!this.plugin.settings.sid) {
+											   new Notice('Please login first using Test Connection button');
+											   return;
+										   }
+										   try {
+											   const client = await this.plugin.getClient();
+											   const { RemoteFolderModal } = await import('./ui/remote-folder-modal');
+											   new RemoteFolderModal(this.app, client, async (selectedPath) => {
+												   text.setValue(selectedPath);
+												   this.plugin.settings.syncFolder = selectedPath;
+												   await this.plugin.saveSettings();
+											   }).open();
+										   } catch (e) {
+											   new Notice(String(e));
+										   }
+									   });
+								});
+							});
 						}
 					},
 					{

@@ -209,6 +209,16 @@ export class SynologyClient {
 	}
 
 	/**
+	 * 获取团队资料夹列表
+	 */
+	async getTeamFolders(): Promise<unknown> {
+		this.debugLog('getTeamFolders');
+		const endpoint = '/api/SynologyDrive/default/v2/team-folder';
+		const res = await this.request(endpoint, { limit: 0 }, 'GET');
+		return res.json;
+	}
+
+	/**
 	 * 列出目录下的文件和文件夹
 	 */
 	async listFiles(path: string): Promise<unknown> {
