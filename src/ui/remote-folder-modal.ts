@@ -2,6 +2,21 @@ import { App, Modal, Setting, setIcon, Notice } from 'obsidian';
 import { SynologyClient } from '../api/client';
 import { t } from '../locales';
 
+
+interface DriveItem {
+    name: string;
+    isdir?: boolean;
+    type?: string;
+    [key: string]: unknown;
+}
+
+interface SynoApiResponse {
+    success?: boolean;
+    data?: {
+        items?: DriveItem[];
+    };
+}
+
 export class RemoteFolderModal extends Modal {
     client: SynologyClient;
     currentPath: string;
@@ -19,45 +34,53 @@ export class RemoteFolderModal extends Modal {
         const { contentEl } = this;
         contentEl.empty();
         
-        contentEl.createEl('h2', { text: t('browser.title') as string || 'Select Remote Folder' });
+        contentEl.createEl('h2', { text: t('browser.title') || 'Select Remote Folder' });
         
         // Navigation bar
         const navEl = contentEl.createDiv({ cls: 'syno-folder-nav' });
-        navEl.style.display = 'flex';
-        navEl.style.alignItems = 'center';
-        navEl.style.marginBottom = '1rem';
-        navEl.style.gap = '8px';
+        navEl.setCssStyles({
+            display: 'flex',
+            alignItems: 'center',
+            marginBottom: '1rem',
+            gap: '8px'
+        });
         
         const backBtn = navEl.createEl('button');
         setIcon(backBtn, 'arrow-left');
         backBtn.onclick = () => this.navigateUp();
         
         const pathDisplay = navEl.createSpan();
-        pathDisplay.style.flexGrow = '1';
-        pathDisplay.style.fontFamily = 'monospace';
-        pathDisplay.style.wordBreak = 'break-all';
+        pathDisplay.setCssStyles({
+            flexGrow: '1',
+            fontFamily: 'monospace',
+            wordBreak: 'break-all'
+        });
         
         // Use a container for the list so we can update it
         this.contentContainer = contentEl.createDiv();
-        this.contentContainer.style.maxHeight = '400px';
-        this.contentContainer.style.overflowY = 'auto';
-        this.contentContainer.style.border = '1px solid var(--background-modifier-border)';
-        this.contentContainer.style.borderRadius = '4px';
-        this.contentContainer.style.padding = '8px';
+        this.contentContainer.setCssStyles({
+            maxHeight: '400px',
+            overflowY: 'auto',
+            border: '1px solid var(--background-modifier-border)',
+            borderRadius: '4px',
+            padding: '8px'
+        });
         
         // Select button at bottom
         const footerEl = contentEl.createDiv({ cls: 'syno-folder-footer' });
-        footerEl.style.marginTop = '1rem';
-        footerEl.style.display = 'flex';
-        footerEl.style.justifyContent = 'flex-end';
+        footerEl.setCssStyles({
+            marginTop: '1rem',
+            display: 'flex',
+            justifyContent: 'flex-end'
+        });
         
         new Setting(footerEl)
             .addButton(btn => btn
-                .setButtonText(t('browser.selectFolder') as string || 'Select this folder')
+                .setButtonText(t('browser.selectFolder') || 'Select this folder')
                 .setCta()
                 .onClick(() => {
                     if (!this.currentPath) {
-                        new Notice(t('browser.selectValid') as string || 'Please select a valid folder');
+                        new Notice(t('browser.selectValid') || 'Please select a valid folder');
                         return;
                     }
                     this.onSelect(this.currentPath);
@@ -90,7 +113,7 @@ export class RemoteFolderModal extends Modal {
 
     async renderList() {
         this.contentContainer.empty();
-        this.contentContainer.createDiv({ text: t('browser.loading') as string || 'Loading...', cls: 'syno-loading' });
+        this.contentContainer.createDiv({ text: t('browser.loading') || 'Loading...', cls: 'syno-loading' });
         
         const pathDisplay = this.contentEl.querySelector('.syno-folder-nav span') as HTMLElement;
         if (pathDisplay) {
@@ -101,11 +124,11 @@ export class RemoteFolderModal extends Modal {
             if (!this.currentPath) {
                 // Root virtual directory
                 this.contentContainer.empty();
-                this.addFolderItem(t('browser.myDrive') as string || 'My Drive', '/mydrive', 'hard-drive');
-                this.addFolderItem(t('browser.teamFolders') as string || 'Team Folders', '/team-folders', 'users');
+                this.addFolderItem(t('browser.myDrive') || 'My Drive', '/mydrive', 'hard-drive');
+                this.addFolderItem(t('browser.teamFolders') || 'Team Folders', '/team-folders', 'users');
             } else if (this.currentPath === '/team-folders') {
                 // List team folders
-                const res = await this.client.getTeamFolders() as any;
+                const res = await this.client.getTeamFolders() as SynoApiResponse;
                 this.contentContainer.empty();
                 if (res?.success && res.data?.items) {
                     for (const item of res.data.items) {
@@ -114,17 +137,17 @@ export class RemoteFolderModal extends Modal {
                 }
             } else {
                 // List standard files
-                const res = await this.client.listFiles(this.currentPath) as any;
+                const res = await this.client.listFiles(this.currentPath) as SynoApiResponse;
                 this.contentContainer.empty();
                 if (res?.success && res.data?.items) {
                     // Filter for directories
-                    const dirs = res.data.items.filter((item: any) => item.isdir === true || item.type === 'dir' || item.type === 'folder');
+                    const dirs = res.data.items.filter((item: DriveItem) => item.isdir === true || item.type === 'dir' || item.type === 'folder');
                     
                     // Sort alphabetically
-                    dirs.sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
+                    dirs.sort((a: DriveItem, b: DriveItem) => (a.name || '').localeCompare(b.name || ''));
                     
                     if (dirs.length === 0) {
-                        this.contentContainer.createDiv({ text: t('browser.empty') as string || 'Empty folder' });
+                        this.contentContainer.createDiv({ text: t('browser.empty') || 'Empty folder' });
                     }
                     
                     for (const dir of dirs) {
@@ -135,24 +158,26 @@ export class RemoteFolderModal extends Modal {
         } catch (e: unknown) {
             this.contentContainer.empty();
             const errDiv = this.contentContainer.createDiv({ cls: 'syno-error' });
-            errDiv.style.color = 'var(--text-error)';
+            errDiv.setCssStyles({ color: 'var(--text-error)' });
             errDiv.setText((e as Error).message || String(e));
         }
     }
 
     addFolderItem(name: string, targetPath: string, icon: string) {
         const itemEl = this.contentContainer.createDiv({ cls: 'syno-folder-item' });
-        itemEl.style.display = 'flex';
-        itemEl.style.alignItems = 'center';
-        itemEl.style.padding = '8px';
-        itemEl.style.cursor = 'pointer';
-        itemEl.style.borderBottom = '1px solid var(--background-modifier-border)';
+        itemEl.setCssStyles({
+            display: 'flex',
+            alignItems: 'center',
+            padding: '8px',
+            cursor: 'pointer',
+            borderBottom: '1px solid var(--background-modifier-border)'
+        });
         
-        itemEl.onmouseover = () => { itemEl.style.backgroundColor = 'var(--background-modifier-hover)'; };
-        itemEl.onmouseout = () => { itemEl.style.backgroundColor = 'transparent'; };
+        itemEl.onmouseover = () => { itemEl.setCssStyles({ backgroundColor: 'var(--background-modifier-hover)' }); };
+        itemEl.onmouseout = () => { itemEl.setCssStyles({ backgroundColor: 'transparent' }); };
         
         const iconEl = itemEl.createSpan();
-        iconEl.style.marginRight = '8px';
+        iconEl.setCssStyles({ marginRight: '8px' });
         setIcon(iconEl, icon);
         
         itemEl.createSpan({ text: name });

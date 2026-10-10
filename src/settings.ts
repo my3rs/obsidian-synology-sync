@@ -215,19 +215,19 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 									});
 								
 								setting.addButton((btn) => {
-									btn.setButtonText((t('settings.syncFolder.browse') as string) || 'Browse')
+									btn.setButtonText((t('settings.syncFolder.browse')) || 'Browse')
 									   .onClick(async () => {
 										   if (!this.plugin.settings.sid) {
-											   new Notice('Please login first using Test Connection button');
+											   new Notice('Please login first using test connection button');
 											   return;
 										   }
 										   try {
 											   const client = await this.plugin.getClient();
 											   const { RemoteFolderModal } = await import('./ui/remote-folder-modal');
-											   new RemoteFolderModal(this.app, client, async (selectedPath) => {
+											   new RemoteFolderModal(this.app, client, (selectedPath) => {
 												   text.setValue(selectedPath);
 												   this.plugin.settings.syncFolder = selectedPath;
-												   await this.plugin.saveSettings();
+												   void this.plugin.saveSettings();
 											   }).open();
 										   } catch (e) {
 											   new Notice(String(e));

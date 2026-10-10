@@ -49,15 +49,15 @@ export class LocalFS {
                 await this.write(path, data);
                 return;
             }
-            let conflictError: Error | null = null;
+            let conflictErrorMsg: string | null = null;
             await this.app.vault.process(file, current => {
                 if (current !== previous) {
-                    conflictError = new Error(t('safety.localChanged', { path }));
+                    conflictErrorMsg = t('safety.localChanged', { path });
                     return current;
                 }
                 return next;
             });
-            if (conflictError) throw conflictError;
+            if (conflictErrorMsg) throw new Error(conflictErrorMsg);
         } else {
             if (file || expected !== null) throw new Error(t('safety.localChanged', { path }));
             // createBinary rejects an existing path rather than overwriting it.
