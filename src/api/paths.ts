@@ -15,8 +15,15 @@ export function normalizeRemoteFolder(value: string): string {
 }
 
 export function remoteFilePath(folder: string, relative: string): string {
+    const path = normalizeSyncFolder(folder);
+    return `${path}/${relative}`;
+}
+
+/** A sync root must support child paths; file references cannot be used as directories. */
+export function normalizeSyncFolder(folder: string): string {
     const path = normalizeRemoteFolder(folder);
     // The documented link form is a single reference, not link:token/child.
-    if (/^(?:id:|link:)/.test(path)) throw new Error(t('safety.invalidResponse'));
-    return `${path}/${relative}`;
+    if (/^(?:id:|link:)/.test(path) || path.includes('\\') || [...path].some(char => char.charCodeAt(0) < 32)
+        || path.split('/').some(part => part === '.' || part === '..')) throw new Error(t('safety.invalidResponse'));
+    return path;
 }

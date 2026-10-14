@@ -1,13 +1,8 @@
 import { requestUrl, RequestUrlParam, RequestUrlResponse } from 'obsidian';
 
-interface ApiResponse {
-	success?: boolean;
-	error?: { 
-		code?: number | string;
-		errors?: { message?: string; line?: number };
-	};
-	data?: Record<string, unknown>;
-}
+import { t } from '../locales';
+import { ApiResponse, checkResponseError, requireApiSuccess, SynologyApiError } from './response';
+import { readAllPages } from './pagination';
 
 export class SynologyClient {
 	private baseUrl: string;
@@ -127,25 +122,9 @@ export class SynologyClient {
 			}
 		}
 
-		// 这里会统一校验抛出 400 以上的异常，不再由于 404/401 提供幽灵数据
 		const res = await this.safeRequestUrl(req);
-		if (res.status >= 400) {
-			let errorDetail = '';
-			const json = res.json as ApiResponse | null;
-			if (json && json.error) {
-				errorDetail = `API Error Code: ${json.error.code}`;
-			} else {
-				errorDetail = res.text;
-			}
-			throw new Error(`HTTP ${res.status}: ${errorDetail}`);
-		}
-		
-		const json = res.json as ApiResponse | null;
-		if (json && json.success === false) {
-			const code = json.error?.code || 'Unknown';
-			throw new Error(`API Error Code: ${code}`);
-		}
-		
+		requireApiSuccess(res);
+
 		return res;
 	}
 
@@ -172,9 +151,9 @@ export class SynologyClient {
 			const res = await this.request(endpoint, payload, 'POST', 'application/json');
 			const result = res.json as { success?: boolean; data?: { sid?: string }; error?: { code?: string | number } };
 
-			if (result && result.success) {
+			if (result?.success === true && typeof result.data?.sid === 'string' && result.data.sid.length > 0) {
 				this.sid = result.data?.sid;
-				return this.sid as string;
+				return this.sid;
 			} else {
 				throw new Error(result?.error?.code ? `Error Code: ${result.error.code}` : "登录失败，请检查账号密码");
 			}
@@ -202,8 +181,7 @@ export class SynologyClient {
 			const res = await this.request(endpoint, params, 'GET');
 			return res.json;
 		} catch (e: unknown) {
-			const errorMsg = e instanceof Error ? e.message : String(e);
-			if (errorMsg.includes('1003')) return null;
+			if (e instanceof SynologyApiError && String(e.code) === '1003') return null;
 			throw e;
 		}
 	}
@@ -223,68 +201,12 @@ export class SynologyClient {
 	 */
 	async listFiles(path: string): Promise<unknown> {
 		this.debugLog('listFiles', { path });
-		const endpoint = '/api/SynologyDrive/default/v2/files/list';
-		
-		let allFiles: unknown[] = [];
-		let offset = 0;
-		const limit = 200; // 降低 limit 避免移动端 JSON 过大被截断抛出 Parse Error
-		let hasMore = true;
-		
-		type ListResponse = ApiResponse & { data?: { items?: unknown[], has_more?: boolean } };
-		let lastResponse: ListResponse | null = null;
-
-		while (hasMore) {
-			const url = new URL(this.baseUrl + endpoint);
-			url.searchParams.append('path', path);
-			url.searchParams.append('limit', limit.toString());
-			url.searchParams.append('offset', offset.toString());
-			if (this.sid) url.searchParams.append('_sid', this.sid);
-
-			let req: RequestUrlParam = {
-				url: url.toString(),
-				method: 'POST',
-				headers: {
-					'Accept': 'application/json',
-					'Content-Type': 'application/json'
-				},
-				throw: false
-			};
-			if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
-			req.body = "{}"; // 没有额外的 body
-
-			const res = await this.safeRequestUrl(req);
-			this.debugLog('listFiles response', { status: res.status, itemCount: (res.json as {data?: {items?: unknown[]}})?.data?.items?.length });
-			if (res.status >= 400) {
-				const json = res.json as ApiResponse | null;
-				const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
-				throw new Error(`HTTP ${res.status}: ${errText}`);
-			}
-			
-			const json = res.json as ListResponse | null;
-			if (json && json.success === false) {
-				const code = json.error?.code || 'Unknown';
-				throw new Error(`API Error Code: ${code} - ${json.error?.errors?.message || 'list node failed'}`);
-			}
-			
-			lastResponse = json;
-			
-			if (json?.data?.items && Array.isArray(json.data.items)) {
-				allFiles.push(...json.data.items);
-			}
-			
-			if (json?.data?.has_more) {
-				hasMore = true;
-				offset += limit;
-			} else {
-				hasMore = false;
-			}
-		}
-		
-		if (lastResponse && lastResponse.data) {
-			lastResponse.data.items = allFiles;
-		}
-		
-		return lastResponse;
+		return readAllPages(async (offset, limit) => {
+			const endpoint = '/api/SynologyDrive/default/v2/files/list';
+			const query = new URLSearchParams({ path, offset: String(offset), limit: String(limit) });
+			const response = await this.request(`${endpoint}?${query}`, {}, 'POST');
+			return response.json;
+		}, item => item.name);
 	}
 
 	/**
@@ -311,18 +233,8 @@ export class SynologyClient {
 		req.body = "{}"; // 创建文件夹不需要 body
 
 		const res = await this.safeRequestUrl(req, conflictAction === 'stop' ? 1 : 3);
-		if (res.status >= 400) {
-			const json = res.json as ApiResponse | null;
-			const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
-			throw new Error(`HTTP ${res.status}: ${errText}`);
-		}
-		
-		const json = res.json as ApiResponse | null;
-		if (json && json.success === false) {
-			const code = json.error?.code || 'Unknown';
-			throw new Error(`API Error Code: ${code}`);
-		}
-		
+		requireApiSuccess(res);
+
 		return res.json;
 	}
 
@@ -330,17 +242,24 @@ export class SynologyClient {
 	 * 递归确保远程目录存在
 	 */
 	async ensureRemoteFolder(path: string): Promise<void> {
-		const parts = path.split('/').filter(p => p);
+		if (path === '/volumes' || path.startsWith('/volumes/')) {
+			await this.listFiles(path);
+			return;
+		}
+		const parts = path.split('/').filter(Boolean);
 		let current = '';
 		for (let i = 0; i < parts.length; i++) {
+			const parent = current;
 			current += '/' + parts[i];
-			if (current === '/mydrive' || current === '/team-folders' || (parts[0] === 'team-folders' && i === 1)) {
-				continue;
-			}
+			if (current === '/mydrive' || current === '/team-folders' || current === '/views'
+				|| ((parts[0] === 'team-folders' || parts[0] === 'views') && i === 1)) continue;
 			try {
-				await this.createFolder(current);
-			} catch {
-				// Ignore errors, if it truly fails, the subsequent upload will fail anyway
+				await this.createFolder(current, 'stop');
+			} catch (error) {
+				// A conflict or lost reply can only be accepted after confirming the directory.
+				const response = await this.listFiles(parent) as { data: { items: Array<{ name: string; type?: string; isdir?: boolean }> } };
+				const entry = response.data.items.find(item => item.name === parts[i]);
+				if (!entry || !(entry.type === 'dir' || entry.type === 'folder' || entry.isdir === true)) throw error;
 			}
 		}
 	}
@@ -398,25 +317,19 @@ export class SynologyClient {
 
 		const res = await this.safeRequestUrl(req);
 		this.debugLog('uploadFile response', { status: res.status, success: (res.json as ApiResponse | null)?.success, errorCode: (res.json as ApiResponse | null)?.error?.code });
-		if (res.status >= 400) {
-			const json = res.json as ApiResponse | null;
-			const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
-			throw new Error(`HTTP ${res.status}: ${errText}`);
-		}
-		
-		const json = res.json as ApiResponse | null;
-		if (json && json.success === false) {
-			const code = json.error?.code;
-			if (code === 1000 && !isRetry) {
+		try {
+			requireApiSuccess(res);
+		} catch (error) {
+			if (error instanceof SynologyApiError && String(error.code) === '1000' && !isRetry) {
 				const parentPath = path.substring(0, path.lastIndexOf('/'));
-				if (parentPath && parentPath !== '/mydrive' && parentPath !== '') {
+				if (parentPath && parentPath !== '/mydrive') {
 					await this.ensureRemoteFolder(parentPath);
 					return this.uploadFile(path, buffer, true);
 				}
 			}
-			throw new Error(`API Error Code: ${code || 'Unknown'} (File: ${path})`);
+			throw error;
 		}
-		
+
 		return res.json;
 	}
 
@@ -439,25 +352,16 @@ export class SynologyClient {
 				'Content-Type': 'application/json'
 			},
 			throw: false,
-			body: JSON.stringify({ files: [path] })
+			body: JSON.stringify({ files: [path], force_download: true })
 		};
 		if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
 
 		const res = await this.safeRequestUrl(req);
 		this.debugLog('downloadFile response', { status: res.status, hasDisposition: !!(res.headers?.['content-disposition']), bodyLen: res.arrayBuffer?.byteLength });
-		if (res.status >= 400) {
-			const json = res.json as ApiResponse | null;
-			const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
-			throw new Error(`HTTP ${res.status}: ${errText}`);
-		}
-
-		// 如果没有 content-disposition 且返回了 JSON 失败响应，说明下载出错（如文件不存在等）
-		const json = res.json as ApiResponse | null;
-		const disposition = res.headers?.['content-disposition'] || '';
-		if (!disposition && json && json.success === false) {
-			const code = json.error?.code || 'Unknown';
-			throw new Error(`API Error Code: ${code}`);
-		}
+		// force_download distinguishes an actual JSON file from an API error envelope.
+		const disposition = Object.entries(res.headers).find(([name]) => name.toLowerCase() === 'content-disposition')?.[1];
+		if (res.status >= 400 || !disposition) checkResponseError(res);
+		if (!disposition) throw new Error(t('safety.invalidResponse'));
 
 		return res.arrayBuffer;
 	}
@@ -475,82 +379,16 @@ export class SynologyClient {
 	 * 搜索自 start_date (Unix 时间戳，秒) 以来被修改过的文件或文件夹
 	 */
 	async search(location: string, fileType: 'file' | 'folder' | 'dir', startDateUnix?: number): Promise<unknown> {
-		const endpoint = '/api/SynologyDrive/default/v2/files/search';
-		
-		let allFiles: unknown[] = [];
-		let offset = 0;
-		const limit = 200; // 降低 limit，避免移动端 JSON 截断
-		let hasMore = true;
-		
-		type SearchResponse = {
-			success?: boolean;
-			data?: {
-				items?: unknown[];
-				has_more?: boolean;
-			}
-		};
-
-		let lastResponse: SearchResponse | null = null;
-
-		while (hasMore) {
-			const url = new URL(this.baseUrl + endpoint);
-			if (this.sid) url.searchParams.append('_sid', this.sid);
-
-			let req: RequestUrlParam = {
-				url: url.toString(),
-				method: 'POST',
-				headers: {
-					'Accept': 'application/json',
-					'Content-Type': 'application/json'
-				},
-				throw: false
-			};
-			if (this.sid) req.headers!['Cookie'] = `id=${this.sid};`;
-			
-			const body: Record<string, unknown> = {
-				location: location,
-				file_type: fileType,
-				limit: limit,
-				offset: offset
-			};
-			if (startDateUnix) {
+		return readAllPages(async (offset, limit) => {
+			const endpoint = '/api/SynologyDrive/default/v2/files/search';
+			const query = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+			const body: Record<string, unknown> = { location, file_type: fileType === 'dir' ? 'folder' : fileType };
+			if (startDateUnix !== undefined) {
 				body.start_date = startDateUnix;
 				body.time = 'modified_time';
 			}
-			req.body = JSON.stringify(body);
-
-			const res = await this.safeRequestUrl(req);
-			if (res.status >= 400) {
-				const json = res.json as ApiResponse | null;
-				const errText = (json && json.error ? `API Error Code: ${json.error.code}` : res.text) || `HTTP ${res.status}`;
-				throw new Error(`HTTP ${res.status}: ${errText}`);
-			}
-			
-			const json = res.json as SearchResponse | null;
-			if (json && json.success === false) {
-				const apiRes = json as ApiResponse;
-				const code = apiRes.error?.code || 'Unknown';
-				throw new Error(`API Error Code: ${code} - ${apiRes.error?.errors?.message || 'search failed'}`);
-			}
-			
-			lastResponse = json;
-			
-			if (json?.data?.items && Array.isArray(json.data.items)) {
-				allFiles = allFiles.concat(json.data.items);
-			}
-
-			// 如果服务端指示有下一页，或者刚好返回满 limit 的元素，就可以继续往下翻页
-			if (json?.data?.has_more === true || (json?.data?.items && json.data.items.length === limit)) {
-				offset += limit;
-			} else {
-				hasMore = false;
-			}
-		}
-
-		if (lastResponse && lastResponse.data) {
-			lastResponse.data.items = allFiles;
-		}
-		return lastResponse || { data: { items: [] } };
+			const response = await this.request(`${endpoint}?${query}`, body, 'POST');
+			return response.json;
+		}, item => item.file_id ?? item.display_path ?? item.path);
 	}
-
 }
