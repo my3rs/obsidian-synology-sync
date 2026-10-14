@@ -1,43 +1,24 @@
-import { Notice, Plugin, setIcon, setTooltip, TAbstractFile, TFile } from 'obsidian';
+import { Plugin, setIcon, setTooltip, TAbstractFile, TFile } from 'obsidian';
 import {
 	DEFAULT_SETTINGS,
 	SynologySyncSettings,
 	SynologySyncSettingTab,
 } from './settings';
 import { t } from './locales';
-import { DeletionTracker } from './sync/deletions';
+import { SyncController, SyncUIState } from './sync/controller';
+import { ConfirmModal } from './ui/confirm-modal';
 import { syncTarget } from './sync/remote-access';
 
 
 import type { SyncLogger } from './sync/logger';
-type SyncUIState = 
-	| 'idle'
-	| 'syncing' 
-	| 'force-uploading' 
-	| 'force-downloading' 
-	| 'rebuilding' 
-	| 'error';
-
 export default class SynologySyncPlugin extends Plugin {
-	private deletions = new DeletionTracker();
-	private syncTarget = '';
-	private ready = false;
-	private unloaded = false;
+	private controller = new SyncController(this);
+	private settingsSave: Promise<void> = Promise.resolve();
 	settings!: SynologySyncSettings;
 	public logger!: SyncLogger;
 	private statusBarItem!: HTMLElement;
-	private syncTimeout: number | null = null;
-	private isSyncing: boolean = false;
-	private currentUIState: SyncUIState = 'idle';
-	private uiResetTimer: number | null = null;
-	
 	updateStatusBar(state: SyncUIState) {
-		this.currentUIState = state;
-		if (this.uiResetTimer) {
-			window.clearTimeout(this.uiResetTimer);
-			this.uiResetTimer = null;
-		}
-
+		if (!this.statusBarItem) return;
 		this.statusBarItem.empty();
 		let iconName = 'cloud';
 		let tooltipText = '';
@@ -81,6 +62,7 @@ export default class SynologySyncPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		this.controller.initialize();
 		
 		
 		const { SyncLogger } = await import('./sync/logger');
@@ -154,7 +136,7 @@ export default class SynologySyncPlugin extends Plugin {
 		this.statusBarItem = this.addStatusBarItem();
 		this.statusBarItem.classList.add('mod-clickable');
 		this.updateStatusBar('idle');
-		this.statusBarItem.onClickEvent(() => {
+		this.registerDomEvent(this.statusBarItem, 'click', () => {
 			void this.runEngineSync(false, true);
 		});
 		
@@ -170,12 +152,10 @@ export default class SynologySyncPlugin extends Plugin {
 		this.registerEvent(this.app.vault.on('modify', (file) => this.triggerAutoSync(file)));
 		this.registerEvent(this.app.vault.on('create', (file) => this.triggerAutoSync(file)));
 		this.registerEvent(this.app.vault.on('delete', (file) => {
-			if (this.ready && !this.isSyncing) this.deletions.deleted(file.path);
-			this.triggerAutoSync(file);
+			this.controller.fileChanged(file, file.path);
 		}));
 		this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
-			if (this.ready && !this.isSyncing) this.deletions.deleted(oldPath);
-			this.triggerAutoSync(file);
+			this.controller.fileChanged(file, oldPath);
 		}));
 
 		// 定时轮询远端变更 (每 30 秒一次 Quick Sync)
@@ -187,9 +167,7 @@ export default class SynologySyncPlugin extends Plugin {
 
 		// 等待库布局就绪后执行全量核验，避免固定延迟与启动扫描竞争。
 		this.app.workspace.onLayoutReady(() => {
-			if (this.unloaded) return;
-			this.ready = true;
-			void this.runEngineSync(true);
+			this.controller.layoutReady();
 		});
 		
 		// 同步引擎命令
@@ -206,6 +184,14 @@ export default class SynologySyncPlugin extends Plugin {
 			name: t('command.runFull'),
 			callback: async () => {
 				await this.runEngineSync(true, true);
+			}
+		});
+
+		this.addCommand({
+			id: 'recover-sync-lock',
+			name: t('command.recoverSyncLock'),
+			callback: () => {
+				new ConfirmModal(this.app, t('settings.recoverLock.confirm'), () => this.doRecoverSyncLock()).open();
 			}
 		});
 
@@ -234,22 +220,7 @@ export default class SynologySyncPlugin extends Plugin {
 	}
 
 	triggerAutoSync(file?: TAbstractFile) {
-		if (!this.ready || this.unloaded || this.isSyncing) return;
-		// 忽略 Obsidian 自身的配置和插件产生的变更（比如我们自己的 sync_data.json），否则会陷入无限循环同步
-		if (file && file.path && file.path.startsWith(this.app.vault.configDir + '/')) {
-			return;
-		}
-		// 忽略同步本身的元数据文件
-		if (file && (file.name === '.sync_manifest.json' || file.name === '.sync_lock')) {
-			return;
-		}
-
-		if (this.syncTimeout) {
-			window.clearTimeout(this.syncTimeout);
-		}
-		this.syncTimeout = window.setTimeout(() => {
-			void this.runEngineSync(false);
-		}, 3000); // 停止打字 3 秒后自动同步
+		this.controller.fileChanged(file);
 	}
 
 	async getClient() {
@@ -261,7 +232,7 @@ export default class SynologySyncPlugin extends Plugin {
 		return client;
 	}
 
-	async getEngine() {
+	async getEngine(signal?: AbortSignal) {
 		const { nasUrl, username, password, otpCode, sid, syncFolder } = this.settings;
 		if (!sid || !syncFolder) {
 			throw new Error(t('notice.nasParamsMissing'));
@@ -276,154 +247,22 @@ export default class SynologySyncPlugin extends Plugin {
 		(client as unknown as { sid: string }).sid = sid;
 
 		const target = syncTarget(nasUrl, username, syncFolder);
-		if (target !== this.syncTarget) { this.deletions = new DeletionTracker(); this.syncTarget = target; }
 		const state = new SyncState(this.app, this.manifest.dir!, target);
-		return new SyncEngine(this.app, client, state, this.logger, syncFolder, this.deletions);
+		return new SyncEngine(this.app, client, state, this.logger, syncFolder, this.controller.deletions, signal);
 	}
 
-	async runEngineSync(fullScan: boolean, showNotice: boolean = false) {
-		if (!this.ready || this.unloaded) return;
-		if (this.isSyncing) {
-			if (showNotice) new Notice(t('notice.engine.syncing'));
-			return;
-		}
-		
-		let syncNotice: Notice | null = null;
-		
-		try {
-			this.isSyncing = true;
-			this.updateStatusBar('syncing');
-			
-			if (showNotice) {
-				syncNotice = new Notice(t('notice.engine.syncing'), 0);
-			}
-			
-			const engine = await this.getEngine();
-			const hasChanges = await engine.runSync(fullScan);
-			
-			if (hasChanges) {
-				this.settings.lastSyncTime = Date.now();
-				void this.saveSettings();
-				this.updateStatusBar('idle');
-				if (syncNotice) {
-					syncNotice.setMessage(t('notice.engine.syncSuccess'));
-					window.setTimeout(() => syncNotice!.hide(), 3000);
-				}
-			} else {
-				this.updateStatusBar('idle');
-				if (syncNotice) {
-					syncNotice.setMessage(t('notice.engine.syncUpToDate'));
-					window.setTimeout(() => syncNotice!.hide(), 3000);
-				}
-			}
-			this.app.workspace.trigger('synology-sync:sync-completed');
-		} catch (err: unknown) {
-			console.error('[SynologySync] Sync Error', err);
-			const errorMsg = err instanceof Error ? err.message : String(err);
-			this.updateStatusBar('error');
-			if (syncNotice) syncNotice.hide();
-			new Notice(t('notice.syncException', { error: errorMsg }));
-		} finally {
-			this.isSyncing = false;
-		}
+	async runEngineSync(fullScan: boolean, showNotice = false) {
+		await this.controller.runSync(fullScan, showNotice);
 	}
 
+	onunload() { this.controller.dispose(); }
 
-	onunload() {
-		this.unloaded = true;
-		this.ready = false;
-		if (this.syncTimeout) window.clearTimeout(this.syncTimeout);
-		if (this.uiResetTimer) window.clearTimeout(this.uiResetTimer);
-	}
-
-	async doForceUpload() {
-		if (!this.ready || this.unloaded || this.isSyncing) return;
-		try {
-			this.isSyncing = true;
-			this.updateStatusBar('force-uploading');
-			const engine = await this.getEngine();
-			await engine.forceUpload();
-			this.settings.lastSyncTime = Date.now();
-			void this.saveSettings();
-			this.updateStatusBar('idle');
-			new Notice(t('notice.forceUploadSuccess'));
-			this.app.workspace.trigger('synology-sync:sync-completed');
-		} catch (e: unknown) {
-			const errorMsg = e instanceof Error ? e.message : String(e);
-			console.error('[SynologySync] 强制上传失败:', e);
-			this.updateStatusBar('error');
-			new Notice(t('notice.forceUploadFailed', { error: errorMsg }));
-		} finally {
-			this.isSyncing = false;
-		}
-	}
-
-	async doForceDownload() {
-		if (!this.ready || this.unloaded || this.isSyncing) return;
-		try {
-			this.isSyncing = true;
-			this.updateStatusBar('force-downloading');
-			const engine = await this.getEngine();
-			await engine.forceDownload();
-			this.settings.lastSyncTime = Date.now();
-			void this.saveSettings();
-			this.updateStatusBar('idle');
-			new Notice(t('notice.forceDownloadSuccess'));
-			this.app.workspace.trigger('synology-sync:sync-completed');
-		} catch (e: unknown) {
-			const errorMsg = e instanceof Error ? e.message : String(e);
-			console.error('[SynologySync] 强制下载失败:', e);
-			this.updateStatusBar('error');
-			new Notice(t('notice.forceDownloadFailed', { error: errorMsg }));
-		} finally {
-			this.isSyncing = false;
-		}
-	}
-
-	async doRebuildSyncState() {
-		if (!this.ready || this.unloaded || this.isSyncing) return;
-		try {
-			this.isSyncing = true;
-			this.updateStatusBar('rebuilding');
-			const engine = await this.getEngine();
-			await engine.rebuildSyncState();
-			this.settings.lastSyncTime = Date.now();
-			void this.saveSettings();
-			this.updateStatusBar('idle');
-			new Notice(t('notice.rebuildSuccess'));
-		} catch (e: unknown) {
-			const errorMsg = e instanceof Error ? e.message : String(e);
-			console.error('[SynologySync] 重建同步状态失败:', e);
-			this.updateStatusBar('error');
-			new Notice(t('notice.rebuildFailed', { error: errorMsg }));
-		} finally {
-			this.isSyncing = false;
-		}
-	}
-
-	async uploadActiveFile() { await this.transferActiveFile('upload'); }
-
-	async downloadActiveFile() { await this.transferActiveFile('download'); }
-
-	private async transferActiveFile(direction: 'upload' | 'download') {
-        if (!this.ready || this.unloaded || this.isSyncing) return;
-        const file = this.app.workspace.getActiveFile();
-        if (!file) { new Notice(t('notice.noActiveFile')); return; }
-        this.isSyncing = true;
-        this.updateStatusBar('syncing');
-        try {
-            const engine = await this.getEngine();
-            await engine.syncFile(file.path, direction);
-            this.settings.lastSyncTime = Date.now();
-            await this.saveSettings();
-            this.updateStatusBar('idle');
-            new Notice(t('notice.engine.syncSuccess'));
-            this.app.workspace.trigger('synology-sync:sync-completed');
-        } catch (error) {
-            this.updateStatusBar('error');
-            new Notice(t('notice.syncException', { error: error instanceof Error ? error.message : String(error) }));
-        } finally { this.isSyncing = false; }
-    }
+	async doForceUpload() { await this.controller.forceUpload(); }
+	async doForceDownload() { await this.controller.forceDownload(); }
+	async doRebuildSyncState() { await this.controller.rebuild(); }
+	async doRecoverSyncLock() { await this.controller.recoverLock(); }
+	async uploadActiveFile() { await this.controller.transferActiveFile('upload'); }
+	async downloadActiveFile() { await this.controller.transferActiveFile('download'); }
 
 	async loadSettings() {
 		this.settings = Object.assign(
@@ -434,6 +273,10 @@ export default class SynologySyncPlugin extends Plugin {
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		this.controller.settingsChanged();
+		const snapshot = { ...this.settings };
+		const save = this.settingsSave.then(() => this.saveData(snapshot));
+		this.settingsSave = save.catch(() => {});
+		await save;
 	}
 }

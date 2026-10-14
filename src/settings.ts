@@ -1,4 +1,5 @@
-import { App, Modal, Notice, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
+import { ConfirmModal } from './ui/confirm-modal';
 import SynologySyncPlugin from './main';
 import { SynologyClient } from './api/client';
 import { t } from './locales';
@@ -24,103 +25,7 @@ export const DEFAULT_SETTINGS: SynologySyncSettings = {
 	debugMode: false,
 };
 
-class ConfirmModal extends Modal {
-	message: string;
-	onConfirm: () => void;
-
-	constructor(app: App, message: string, onConfirm: () => void) {
-		super(app);
-		this.message = message;
-		this.onConfirm = onConfirm;
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText(this.message);
-		
-		new Setting(contentEl)
-			.addButton((btn) =>
-				btn
-					.setButtonText('Cancel')
-					.onClick(() => {
-						this.close();
-					}))
-			.addButton((btn) =>
-				btn
-					.setButtonText('Confirm')
-					.setCta()
-					.onClick(() => {
-						this.close();
-						this.onConfirm();
-					}));
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-class InitialSyncModal extends Modal {
-	plugin: SynologySyncPlugin;
-
-	constructor(app: App, plugin: SynologySyncPlugin) {
-		super(app);
-		this.plugin = plugin;
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.empty();
-		contentEl.createEl('h2', { text: t('settings.initialSync.title') });
-		contentEl.createEl('p', { text: t('settings.initialSync.desc') });
-
-		new Setting(contentEl)
-			.setName(t('settings.initialSync.upload.name'))
-			.setDesc(t('settings.initialSync.upload.desc'))
-			.addButton((btn) =>
-				btn
-					.setButtonText(t('settings.initialSync.upload.btn'))
-					.setCta()
-					.onClick(() => {
-						this.close();
-						void this.plugin.doForceUpload();
-					})
-			);
-
-		new Setting(contentEl)
-			.setName(t('settings.initialSync.download.name'))
-			.setDesc(t('settings.initialSync.download.desc'))
-			.addButton((btn) =>
-				btn
-					.setButtonText(t('settings.initialSync.download.btn'))
-					.setCta()
-					.onClick(() => {
-						this.close();
-						void this.plugin.doForceDownload();
-					})
-			);
-
-		new Setting(contentEl)
-			.setName(t('settings.initialSync.skip.name'))
-			.setDesc(t('settings.initialSync.skip.desc'))
-			.addButton((btn) =>
-				btn
-					.setButtonText(t('settings.initialSync.skip.btn'))
-					.onClick(() => {
-						this.close();
-					})
-			);
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-
-// @ts-ignore TS2515: display() is intentionally omitted as it is deprecated in Obsidian 1.13.0+ but still required by older typings
+// @ts-expect-error TS2515: Obsidian 1.13 uses getSettingDefinitions; installed typings still require display.
 export class SynologySyncSettingTab extends PluginSettingTab {
 	plugin: SynologySyncPlugin;
 
@@ -129,7 +34,11 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	// @ts-ignore: To support Obsidian 1.13+ setting search capabilities
+	private refresh(): void {
+		const update = (this as unknown as { update?: () => void }).update;
+		if (typeof update === 'function') update.call(this);
+	}
+
 	getSettingDefinitions() {
 		return [
 			{
@@ -218,7 +127,7 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 									btn.setButtonText((t('settings.syncFolder.browse')) || 'Browse')
 									   .onClick(async () => {
 										   if (!this.plugin.settings.sid) {
-											   new Notice('Please login first using test connection button');
+											   new Notice(t('notice.loginRequired'));
 											   return;
 										   }
 										   try {
@@ -251,24 +160,22 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 										const client = new SynologyClient(nasUrl, username, password, otpCode);
 										
 										try {
-											const isFirstLogin = !this.plugin.settings.lastSyncTime;
+											btn.setDisabled(true);
 											const sid = await client.login();
+											// Discard a login response if the user edited its connection while awaiting the NAS.
+											const current = this.plugin.settings;
+											if (current.nasUrl !== nasUrl || current.username !== username || current.password !== password || current.otpCode !== otpCode) return;
 											this.plugin.settings.sid = sid;
 											this.plugin.settings.otpCode = ''; // 登录成功后清空一次性验证码
 											await this.plugin.saveSettings();
 											new Notice(t('notice.connSuccess'));
 											
-											// 强制刷新设置界面
-											// 在 Obsidian 1.13+ 的声明式设置中，调用 this.update() 即可刷新
-											(this as unknown as { update: () => void }).update();
-
-											if (isFirstLogin) {
-												new InitialSyncModal(this.app, this.plugin).open();
-											}
+											this.refresh();
+											void this.plugin.runEngineSync(true, true);
 										} catch (err: unknown) {
 											const errorMsg = err instanceof Error ? err.message : String(err);
 											new Notice(t('notice.connFailed', { error: errorMsg }));
-										}
+										} finally { btn.setDisabled(false); }
 									});
 							});
 						}
@@ -330,6 +237,16 @@ export class SynologySyncSettingTab extends PluginSettingTab {
 									   }).open();
 								   });
 							});
+						}
+					},
+					{
+						id: "recoverSyncLock",
+						name: t('settings.recoverLock.name'),
+						description: t('settings.recoverLock.desc'),
+						render: (setting: Setting) => {
+							setting.addButton(btn => btn.setButtonText(t('settings.recoverLock.btn')).setWarning().onClick(() => {
+								new ConfirmModal(this.app, t('settings.recoverLock.confirm'), () => this.plugin.doRecoverSyncLock()).open();
+							}));
 						}
 					},
 					{

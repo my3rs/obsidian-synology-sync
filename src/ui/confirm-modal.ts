@@ -1,4 +1,5 @@
 import { App, Modal } from 'obsidian';
+import { t } from '../locales';
 
 export class ConfirmModal extends Modal {
     private message: string;
@@ -16,25 +17,26 @@ export class ConfirmModal extends Modal {
         const { contentEl } = this;
         contentEl.empty();
         
-        contentEl.createEl('h3', { text: 'Confirm' });
+        contentEl.createEl('h3', { text: t('ui.confirm') });
         contentEl.createEl('p', { text: this.message });
 
         const buttonsEl = contentEl.createDiv();
         buttonsEl.addClass('sync-log-buttons');
         // Re-using sync-log-buttons
 
-        const btnCancel = buttonsEl.createEl('button', { text: 'Cancel' });
+        const btnCancel = buttonsEl.createEl('button', { text: t('ui.cancel') });
         btnCancel.onclick = () => {
             if (this.onCancel) void this.onCancel();
             this.close();
         };
 
-        const btnConfirm = buttonsEl.createEl('button', { text: 'Confirm' });
+        const btnConfirm = buttonsEl.createEl('button', { text: t('ui.confirm') });
         btnConfirm.addClass('mod-warning');
         btnConfirm.onclick = () => {
             void this.onConfirm();
             this.close();
         };
+        btnCancel.focus();
     }
 
     onClose() {
