@@ -4,12 +4,18 @@ import { t } from '../locales';
 
 /** Never use overwrite to ensure a directory: it can contain another writer's lock and data. */
 export async function ensureSyncFolder(client: SynologyClient, path: string): Promise<void> {
+    if (path === '/volumes' || path.startsWith('/volumes/')) {
+        // Absolute-volume path depth is server-specific: never try to create its virtual roots.
+        await listRemoteFiles(client, path);
+        return;
+    }
     const parts = path.split('/').filter(Boolean);
     let current = '';
     for (let i = 0; i < parts.length; i++) {
         const parent = current;
         current += '/' + parts[i];
-        if (current === '/mydrive' || current === '/team-folders' || (parts[0] === 'team-folders' && i === 1)) continue;
+        if (current === '/mydrive' || current === '/team-folders' || current === '/views'
+            || ((parts[0] === 'team-folders' || parts[0] === 'views') && i === 1)) continue;
         try {
             const result = await client.createFolder(current, 'stop') as { success?: boolean } | null;
             if (result?.success !== true) throw new Error(t('safety.invalidResponse'));

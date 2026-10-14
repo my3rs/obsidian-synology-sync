@@ -4,15 +4,17 @@ import { SyncState, LocalFileEntry } from './state';
 import { calculateSHA256 } from './utils';
 import { SyncLogger } from './logger';
 import { t } from '../locales';
-import { ManifestManager } from './manifest';
+import { ManifestManager, SyncLockedError } from './manifest';
 import { computeSyncPlan, LocalFileInfo } from './differ';
 import { DeletionTracker } from './deletions';
 import { RemoteTransaction } from './transaction';
 import { PlanExecutor } from './executor';
 import { scanRemote } from './remote-scan';
 import { validPath } from './validation';
-import { normalizeRemoteFolder } from '../api/paths';
+import { normalizeSyncFolder } from '../api/paths';
 import { withRemoteDiagnostics } from './remote-diagnostics';
+import { hasRemoteFile } from './remote-access';
+import { assertActive } from './cancellation';
 
 type Mode = 'sync' | 'upload' | 'download' | 'rebuild';
 
@@ -23,12 +25,12 @@ export class SyncEngine {
     private isSyncing = false;
 
     constructor(private app: App, private client: SynologyClient, private state: SyncState,
-        private logger: SyncLogger, private remoteFolder: string, private deletions = new DeletionTracker()) {
+        private logger: SyncLogger, private remoteFolder: string, private deletions = new DeletionTracker(), private signal?: AbortSignal) {
         this.client = withRemoteDiagnostics(client);
-        this.remoteFolder = normalizeRemoteFolder(remoteFolder);
+        this.remoteFolder = normalizeSyncFolder(remoteFolder);
         this.manager = new ManifestManager(this.client, this.remoteFolder);
-        this.transaction = new RemoteTransaction(this.client, this.manager, this.remoteFolder);
-        this.executor = new PlanExecutor(app, this.client, state, logger, this.manager, this.transaction, this.remoteFolder);
+        this.transaction = new RemoteTransaction(this.client, this.manager, this.remoteFolder, signal);
+        this.executor = new PlanExecutor(app, this.client, state, logger, this.manager, this.transaction, this.remoteFolder, signal);
     }
 
     async runSync(fullScan = false, showNotice = false): Promise<boolean> {
@@ -40,6 +42,23 @@ export class SyncEngine {
     async rebuildSyncState(): Promise<boolean> { return this.run('rebuild', undefined, true); }
     async syncFile(path: string, direction: 'upload' | 'download'): Promise<boolean> { return this.run(direction, path, true); }
 
+    /** Only called after explicit confirmation that every other device has stopped. */
+    async recoverLock(): Promise<void> {
+        if (this.isSyncing) throw new Error(t('safety.busy'));
+        this.isSyncing = true;
+        try {
+            assertActive(this.signal);
+            if (await hasRemoteFile(this.client, `${this.remoteFolder}/.sync_lock`)) {
+                assertActive(this.signal);
+                await this.client.deleteFile(`${this.remoteFolder}/.sync_lock`);
+            }
+        } finally { this.isSyncing = false; }
+    }
+
+    private excluded(path: string): boolean {
+        return path === this.app.vault.configDir || path.startsWith(this.app.vault.configDir + '/');
+    }
+
     private async run(mode: Mode, onlyPath?: string, fullScan = false): Promise<boolean> {
         if (this.isSyncing) throw new Error(t('safety.busy'));
         this.isSyncing = true;
@@ -49,7 +68,9 @@ export class SyncEngine {
         let failure: unknown;
         let result = false;
         try {
+            assertActive(this.signal);
             await this.state.load();
+            assertActive(this.signal);
             deviceId = this.state.getDeviceId();
             locked = await this.manager.acquireLock(deviceId);
             if (!locked) throw new Error(t('safety.locked'));
@@ -57,24 +78,27 @@ export class SyncEngine {
             const manifest = await this.manager.downloadManifest();
             const beforeScan = JSON.stringify(manifest);
             // Verify remote contents rather than trusting an out-of-date manifest or mtime.
-            if (fullScan || Object.keys(manifest.files).length === 0) await scanRemote(this.client, this.remoteFolder, manifest, deviceId);
+            if (fullScan || Object.keys(manifest.files).length === 0) await scanRemote(this.client, this.remoteFolder, manifest, deviceId, path => this.excluded(path), this.signal);
+            assertActive(this.signal);
             if (mode === 'rebuild') this.state.clear();
             const local = await this.detectLocalChanges();
             const snapshots = new Map<string, LocalFileEntry>();
             for (const path of this.state.getAllPaths()) {
+                if (this.excluded(path)) continue;
                 const entry = this.state.getFileState(path);
                 if (entry) {
                     if (manifest.files[path] && manifest.files[path].rev < entry.syncedRev) throw new Error(t('safety.invalidManifest'));
                     snapshots.set(path, entry);
                 }
             }
-            const plan = computeSyncPlan(local, snapshots, new Map(Object.entries(manifest.files)), this.deletions.pending);
+            const remote = new Map(Object.entries(manifest.files).filter(([path]) => !this.excluded(path)));
+            const plan = computeSyncPlan(local, snapshots, remote, this.deletions.pending);
             // Force means overwrite matching files, never mirror-delete absent files.
             if (mode === 'upload' || mode === 'download') {
                 for (const value of [plan.uploads, plan.downloads, plan.deletionsLocal, plan.deletionsRemote, plan.conflicts, plan.snapshotClears, plan.snapshotUpdates]) value.clear();
-                const paths = onlyPath ? [onlyPath] : mode === 'upload' ? [...local.keys()] : Object.keys(manifest.files);
+                const paths = onlyPath ? [onlyPath] : mode === 'upload' ? [...local.keys()] : [...remote.keys()];
                 for (const path of paths) {
-                    if (!validPath(path)) throw new Error(t('safety.invalidManifest'));
+                    if (!validPath(path) || this.excluded(path)) throw new Error(t('safety.invalidManifest'));
                     if (onlyPath && (mode === 'upload' ? !local.has(path) : !manifest.files[path] || manifest.files[path].deleted)) throw new Error(t('safety.localChanged', { path }));
                     if (mode === 'upload' && local.has(path)) {
                         // Preserve a divergent remote version before replacing it.
@@ -83,20 +107,37 @@ export class SyncEngine {
                     } else if (mode === 'download' && manifest.files[path] && !manifest.files[path].deleted) plan.downloads.add(path);
                 }
             }
-            if (plan.deletionsRemote.size >= 10 || (plan.deletionsRemote.size > 1 && plan.deletionsRemote.size / Math.max(snapshots.size, 1) >= 0.2)) {
+            // A rename retains the exact bytes at a new path. Uploads complete before
+            // deletions, and the executor verifies each retained copy before removing its source.
+            const uploadsByHash = new Map<string, string>();
+            for (const [path, file] of local) {
+                const remoteCopy = manifest.files[path];
+                if (plan.uploads.has(path) || (remoteCopy && !remoteCopy.deleted && remoteCopy.hash === file.hash)) {
+                    uploadsByHash.set(file.hash, path);
+                }
+            }
+            const retainedCopies = new Map<string, string>();
+            for (const path of plan.deletionsRemote) {
+                const copy = uploadsByHash.get(manifest.files[path]!.hash);
+                if (copy) retainedCopies.set(path, copy);
+            }
+            const destructiveCount = plan.deletionsRemote.size - retainedCopies.size;
+            if (destructiveCount >= 10 || (destructiveCount > 1 && destructiveCount / Math.max(snapshots.size, 1) >= 0.2)) {
                 throw new Error(t('safety.massDelete'));
             }
-            const changed = await this.executor.execute(plan, manifest, deviceId, local, mode === 'download');
+            const changed = await this.executor.execute(plan, manifest, deviceId, local, mode === 'download', retainedCopies);
+            assertActive(this.signal);
             if (JSON.stringify(manifest) !== beforeScan) await this.manager.uploadManifest(manifest, deviceId);
+            assertActive(this.signal);
             await this.state.save();
-            for (const path of [...plan.deletionsRemote, ...plan.deletionsLocal, ...plan.downloads, ...plan.snapshotClears]) this.deletions.complete(path);
-            this.deletions.observe(local.keys());
-            this.deletions.observe(plan.downloads);
+            for (const path of [...plan.deletionsRemote, ...plan.deletionsLocal, ...plan.snapshotClears]) this.deletions.complete(path);
+            // Use the live vault, not the scan: an edit/delete can occur while requests are in flight.
+            this.deletions.observe(this.app.vault.getFiles().map(file => file.path).filter(path => validPath(path) && !this.excluded(path)));
             result = changed || JSON.stringify(manifest) !== beforeScan;
         } catch (error) {
             failed = true;
             failure = error;
-            await this.recordError(error);
+            if (!(error instanceof SyncLockedError)) await this.recordError(error);
         } finally {
             try {
                 if (locked) await this.manager.releaseLock(deviceId);
@@ -122,10 +163,12 @@ export class SyncEngine {
     private async detectLocalChanges(): Promise<Map<string, LocalFileInfo>> {
         const files = new Map<string, LocalFileInfo>();
         for (const file of this.app.vault.getFiles()) {
+            assertActive(this.signal);
             if (file.path.startsWith(this.app.vault.configDir + '/') || file.path.split('/').some(part => part.startsWith('.'))) continue;
             if (!validPath(file.path)) throw new Error(t('safety.invalidManifest'));
             if (file.stat.size > 50 * 1024 * 1024) throw new Error(t('safety.largeFile', { path: file.path }));
             const buffer = await this.app.vault.readBinary(file);
+            assertActive(this.signal);
             files.set(file.path, { hash: await calculateSHA256(buffer), mtime: file.stat.mtime });
         }
         return files;

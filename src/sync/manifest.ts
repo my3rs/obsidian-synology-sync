@@ -1,7 +1,7 @@
 import { SynologyClient } from '../api/client';
 import { isHash, record, validPath } from './validation';
 import { t } from '../locales';
-import { readRemoteRecord } from './remote-access';
+import { hasRemoteFile, readRemoteRecord } from './remote-access';
 import { SyncOperationError } from './remote-diagnostics';
 import { diagnoseLockRead } from './lock-diagnostics';
 
@@ -18,6 +18,10 @@ export interface ManifestEntry {
 export interface SyncManifest {
     schemaVersion: 1;
     files: Record<string, ManifestEntry>;
+}
+
+export class SyncLockedError extends Error {
+    constructor() { super(t('safety.locked')); this.name = 'SyncLockedError'; }
 }
 
 export function validateManifest(value: unknown): asserts value is SyncManifest {
@@ -42,7 +46,17 @@ export class ManifestManager {
     async acquireLock(_deviceId: string): Promise<boolean> {
         await this.client.ensureRemoteFolder(this.remoteFolder);
         // Documented create conflict_action=stop; no retry after an ambiguous create result.
-        const created = await this.client.createFolder(this.path('.sync_lock'), 'stop') as { success?: boolean } | null;
+        let created: { success?: boolean } | null;
+        try {
+            created = await this.client.createFolder(this.path('.sync_lock'), 'stop') as { success?: boolean } | null;
+        } catch (error) {
+            // Another device may already hold the exclusive directory.
+            // Listing establishes a held lock without guessing Drive error codes.
+            let held = false;
+            try { held = await hasRemoteFile(this.client, this.path('.sync_lock')); } catch { /* Preserve the create error. */ }
+            if (held) throw new SyncLockedError();
+            throw error;
+        }
         if (created?.success !== true) throw new Error(t('safety.invalidResponse'));
         this.token = crypto.randomUUID();
         try {

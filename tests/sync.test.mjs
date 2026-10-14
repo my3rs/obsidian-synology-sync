@@ -86,7 +86,7 @@ function device(remote, initial = {}, saved) {
         fileManager:{trashFile:async file=>{files.delete(file.path);contents.delete(file.path);}}};
     const tracker=new DeletionTracker(); const logs=[];
     const state=new SyncState(app,'plugin','target');
-    const engine=()=>new SyncEngine(app,remote,state,{addLog:async l=>logs.push(l),flush:async()=>{}},root,tracker);
+    const engine=signal=>new SyncEngine(app,remote,state,{addLog:async l=>logs.push(l),flush:async()=>{}},root,tracker,signal);
     return {app,put,contents,storage,tracker,state,logs,engine,
         remove(path){tracker.deleted(path);contents.delete(path);files.delete(path);},
         read:p=>text(contents.get(p)),sync:()=>engine().runSync(true)};
@@ -209,9 +209,9 @@ test('API HTTP 200 business errors reject deletion',async()=>{
     globalThis.mockRequest=async()=>response({success:false,error:{code:1000}});
     await assert.rejects(new SynologyClient('https://nas.test','user').deleteFile('/mydrive/a.md'),/1000/);
 });
-test('exclusive create sends stop without changing legacy response handling',async()=>{
-    let request;globalThis.mockRequest=async req=>{request=req;return response({});};
-    assert.deepEqual(await new SynologyClient('https://nas.test','user').createFolder('/mydrive/.sync_lock','stop'),{});
+test('exclusive create sends stop and requires an acknowledged response',async()=>{
+    let request;globalThis.mockRequest=async req=>{request=req;return response({success:true});};
+    assert.deepEqual(await new SynologyClient('https://nas.test','user').createFolder('/mydrive/.sync_lock','stop'),{success:true});
     assert.equal(new URL(request.url).searchParams.get('conflict_action'),'stop');
 });
 test('API listing collects multiple pages',async()=>{
@@ -441,4 +441,120 @@ test('safe folder preparation does not replace a file or ignore an unreadable li
     assert.equal(text(r.files.get(root+'/same')),'keep');
     r.listFiles=async()=>{throw Error('API Error Code: 1003');};
     await assert.rejects(withRemoteDiagnostics(r).ensureRemoteFolder(root),/1003/);
+});
+
+test('recovery refuses to overwrite a file edited after an interrupted upload',async()=>{
+    const r=new Remote();const d=device(r,{'a.md':'base'});await d.sync();d.put('a.md','planned');
+    r.fail=(op,path)=>{if(op==='upload'&&path===root+'/a.md')throw Error('offline');};
+    await assert.rejects(d.sync(),/offline/);r.fail=null;
+    r.files.set(root+'/a.md',bytes('new remote edit'));
+    await assert.rejects(d.sync(),/Recovery stopped/);
+    assert.equal(text(r.files.get(root+'/a.md')),'new remote edit');
+    assert.equal(d.read('a.md'),'planned');assert.ok(r.files.has(root+'/.sync_pending.json'));
+});
+
+test('recovery refuses to delete a remote edit made after an interrupted deletion',async()=>{
+    const r=new Remote();const d=device(r,{'a.md':'base'});await d.sync();d.remove('a.md');
+    r.fail=(op,path)=>{if(op==='delete'&&path===root+'/a.md')throw Error('offline');};
+    await assert.rejects(d.sync(),/offline/);r.fail=null;r.files.set(root+'/a.md',bytes('new remote edit'));
+    await assert.rejects(d.sync(),/Recovery stopped/);
+    assert.equal(text(r.files.get(root+'/a.md')),'new remote edit');
+    assert.equal(r.manifest().files['a.md'].deleted,undefined);
+});
+
+test('already committed recovery needs no stale payload and does not rewrite contents',async()=>{
+    const r=new Remote();const d=device(r,{'a.md':'A'});
+    r.fail=(op,path)=>{if(op==='delete'&&path.endsWith('.sync_pending.json'))throw Error('offline');};
+    await assert.rejects(d.sync(),/offline/);r.fail=null;r.files.delete(root+'/.sync_pending_data');
+    const count=r.writes.filter(p=>p===root+'/a.md').length;
+    await d.sync();assert.equal(r.writes.filter(p=>p===root+'/a.md').length,count);
+    assert.equal(r.files.has(root+'/.sync_pending.json'),false);await stable(d,r);
+});
+
+test('a stale journal cannot roll back a newer manifest entry',async()=>{
+    const r=new Remote();const d=device(r,{'a.md':'A','b.md':'B'});await d.sync();
+    const stale=r.manifest();const b=bytes('new B');r.files.set(root+'/b.md',b);
+    const current=r.manifest();current.files['b.md']={...current.files['b.md'],rev:2,hash:await hash(b),size:b.byteLength};
+    r.files.set(root+'/.sync_manifest.json',json(current));
+    r.files.set(root+'/.sync_pending.json',json({schemaVersion:2,path:'a.md',manifest:stale,previousHash:null}));
+    await assert.rejects(d.sync(),/Recovery stopped/);
+    assert.equal(r.manifest().files['b.md'].rev,2);assert.equal(text(r.files.get(root+'/b.md')),'new B');
+});
+
+test('deletion during state saving remains pending instead of being erased by the scan',async()=>{
+    const r=new Remote();const d=device(r,{'a.md':'A'});await d.sync();
+    const write=d.app.vault.adapter.write;let deleted=false;
+    d.app.vault.adapter.write=async(path,value)=>{await write(path,value);if(!deleted){deleted=true;d.remove('a.md');}};
+    await d.sync();assert.ok(d.tracker.pending.has('a.md'));
+    d.app.vault.adapter.write=write;await d.sync();assert.equal(r.manifest().files['a.md'].deleted,true);
+});
+
+test('cancelling an in-flight download preserves local bytes and releases the lock',async()=>{
+    const r=new Remote();const a=device(r,{'a.md':'A'});await a.sync();const b=device(r);await b.sync();
+    a.put('a.md','remote');await a.sync();const controller=new AbortController();
+    const download=r.downloadFile.bind(r);r.downloadFile=async path=>{const result=await download(path);if(path===root+'/a.md')controller.abort();return result;};
+    await assert.rejects(b.engine(controller.signal).runSync(false),/Sync stopped/);
+    assert.equal(b.read('a.md'),'A');assert.equal(r.folders.has(root+'/.sync_lock'),false);
+});
+
+test('cancelling after staging an upload leaves a recoverable journal without later writes',async()=>{
+    const r=new Remote();const d=device(r,{'a.md':'A'});const controller=new AbortController();
+    const upload=r.uploadFile.bind(r);r.uploadFile=async(path,buffer)=>{await upload(path,buffer);if(path.endsWith('.sync_pending.json'))controller.abort();};
+    await assert.rejects(d.engine(controller.signal).runSync(true),/Sync stopped/);
+    assert.equal(r.files.has(root+'/a.md'),false);assert.ok(r.files.has(root+'/.sync_pending.json'));
+    assert.equal(r.folders.has(root+'/.sync_lock'),false);r.uploadFile=upload;await d.sync();assert.equal(text(r.files.get(root+'/a.md')),'A');
+});
+
+test('custom configuration folders are excluded on both ends',async()=>{
+    const r=new Remote();await seed(r,'config/plugins/other/data.json','private config');await seed(r,'note.md','note');
+    const d=device(r,{'config/plugins/local/data.json':'local settings'});d.app.vault.configDir='config';
+    await d.sync();assert.equal(d.contents.has('config/plugins/other/data.json'),false);
+    assert.equal(d.read('config/plugins/local/data.json'),'local settings');assert.equal(d.read('note.md'),'note');
+    assert.equal(r.files.has(root+'/config/plugins/local/data.json'),false);
+});
+
+test('explicit lock recovery removes only the lock and preserves the pending operation',async()=>{
+    const r=new Remote();const d=device(r,{'a.md':'A'});
+    r.fail=(op,path)=>{if(op==='upload'&&path===root+'/a.md')throw Error('offline');};await assert.rejects(d.sync());r.fail=null;
+    r.folders.add(root+'/.sync_lock');r.files.set(root+'/.sync_lock/owner.json',bytes('stopped writer'));
+    const pending=r.files.get(root+'/.sync_pending.json').slice(0);
+    await d.engine().recoverLock();assert.equal(r.folders.has(root+'/.sync_lock'),false);
+    assert.deepEqual(r.files.get(root+'/.sync_pending.json'),pending);await d.sync();assert.equal(text(r.files.get(root+'/a.md')),'A');
+});
+
+test('folder renames retain bytes before deleting their old paths without a bulk-delete false alarm',async()=>{
+    const r=new Remote();const initial=Object.fromEntries(Array.from({length:12},(_,i)=>[`old/${i}.md`,`note ${i}`]));
+    const d=device(r,initial);await d.sync();
+    for(const [path,value]of Object.entries(initial)){d.remove(path);d.put(path.replace('old/','new/'),value);}
+    await d.sync();
+    for(const [path,value]of Object.entries(initial)){
+        assert.equal(r.manifest().files[path].deleted,true);
+        assert.equal(text(r.files.get(root+'/'+path.replace('old/','new/'))),value);
+    }
+    await stable(d,r);
+});
+
+test('a failed rename upload never removes the original remote files',async()=>{
+    const r=new Remote();const d=device(r,{'old/a.md':'A','old/b.md':'B'});await d.sync();
+    d.remove('old/a.md');d.remove('old/b.md');d.put('new/a.md','A');d.put('new/b.md','B');
+    r.fail=(op,path)=>{if(op==='upload'&&path===root+'/new/b.md')throw Error('offline');};
+    await assert.rejects(d.sync(),/offline/);
+    assert.equal(text(r.files.get(root+'/old/a.md')),'A');assert.equal(text(r.files.get(root+'/old/b.md')),'B');
+    r.fail=null;await d.sync();assert.equal(r.manifest().files['old/a.md'].deleted,true);
+    assert.equal(r.manifest().files['old/b.md'].deleted,true);await stable(d,r);
+});
+
+test('unsupported sync references and traversal paths fail before any remote writes',()=>{
+    const r=new Remote();const d=device(r);
+    for(const folder of ['id:123','link:abc','/mydrive/../elsewhere','/mydrive/bad\\path']){
+        assert.throws(()=>new SyncEngine(d.app,r,d.state,{addLog:async()=>{},flush:async()=>{}},folder));
+    }
+    assert.deepEqual(r.writes,[]);
+});
+
+test('view folder preparation never tries to create its virtual roots',async()=>{
+    const r=new Remote();r.folders.add('/views');r.folders.add('/views/shared');const paths=[];const create=r.createFolder.bind(r);
+    r.createFolder=async(path,action)=>{paths.push(path);return create(path,action);};
+    await withRemoteDiagnostics(r).ensureRemoteFolder('/views/shared/notes');
+    assert.deepEqual(paths,['/views/shared/notes']);
 });

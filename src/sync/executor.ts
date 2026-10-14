@@ -9,18 +9,21 @@ import { RemoteTransaction } from './transaction';
 import { calculateSHA256 } from './utils';
 import { SyncLogger } from './logger';
 import { hasRemoteFile } from './remote-access';
+import { assertActive } from './cancellation';
 
 export class PlanExecutor {
     private fs: LocalFS;
     constructor(private app: App, private client: SynologyClient, private state: SyncState,
         private logger: SyncLogger, private manager: ManifestManager, private transaction: RemoteTransaction,
-        private folder: string) { this.fs = new LocalFS(app); }
+        private folder: string, private signal?: AbortSignal) { this.fs = new LocalFS(app, signal); }
 
     private async unchanged(path: string, expected: LocalFileInfo | undefined): Promise<void> {
+        assertActive(this.signal);
         const current = await this.fs.read(path);
         if (expected ? !current || await calculateSHA256(current) !== expected.hash : current !== null) {
             throw new Error(t('safety.localChanged', { path }));
         }
+        assertActive(this.signal);
     }
 
     private snapshot(path: string, manifest: SyncManifest) {
@@ -55,7 +58,7 @@ export class PlanExecutor {
             await this.client.ensureRemoteFolder(remotePath.slice(0, remotePath.lastIndexOf('/')));
         }
         await this.remoteUnchanged(path, manifest);
-        await this.transaction.commit(path, next, deviceId, buffer);
+        await this.transaction.commit(path, next, deviceId, buffer, manifest.files[path]);
         manifest.files = next.files;
         this.snapshot(path, manifest);
         await this.logger.addLog({ action: 'Upload', file: path });
@@ -78,6 +81,7 @@ export class PlanExecutor {
     }
 
     private async preserve(path: string, buffer: ArrayBuffer): Promise<string> {
+        assertActive(this.signal);
         const hash = await calculateSHA256(buffer);
         const slash = path.lastIndexOf('/');
         const dot = path.lastIndexOf('.');
@@ -86,15 +90,20 @@ export class PlanExecutor {
         const existing = await this.fs.read(copy);
         if (existing) {
             if (await calculateSHA256(existing) !== hash) throw new Error(t('safety.copyExists', { path: copy }));
-        } else await this.fs.write(copy, buffer);
+        } else {
+            assertActive(this.signal);
+            await this.fs.writeChecked(copy, buffer, null);
+        }
         return copy;
     }
 
-    async execute(plan: SyncPlan, manifest: SyncManifest, deviceId: string, local: Map<string, LocalFileInfo>, preserveDownloads = false): Promise<boolean> {
+    async execute(plan: SyncPlan, manifest: SyncManifest, deviceId: string, local: Map<string, LocalFileInfo>,
+        preserveDownloads = false, retainedCopies: ReadonlyMap<string, string> = new Map()): Promise<boolean> {
         // Sequential operations keep a single durable journal and stop immediately on failure.
         for (const path of plan.uploads) await this.upload(path, manifest, deviceId, local.get(path));
         for (const path of plan.downloads) await this.download(path, manifest, local.get(path), preserveDownloads);
         for (const path of plan.conflicts) {
+            assertActive(this.signal);
             const entry = manifest.files[path];
             if (!entry || entry.deleted) {
                 // Preserve an unknown local file against an existing deletion as a separate file.
@@ -119,12 +128,18 @@ export class PlanExecutor {
         }
         for (const path of plan.deletionsRemote) {
             await this.unchanged(path, undefined);
+            const copy = retainedCopies.get(path);
+            if (copy) {
+                const retained = manifest.files[copy];
+                if (!retained || retained.deleted || retained.hash !== manifest.files[path]?.hash) throw new Error(t('safety.massDelete'));
+                await this.remoteUnchanged(copy, manifest);
+            }
             const next: SyncManifest = { schemaVersion: 1, files: { ...manifest.files, [path]: {
                 rev: (manifest.files[path]?.rev ?? 0) + 1, hash: '', size: 0,
                 updatedBy: deviceId, updatedAt: Date.now(), deleted: true, deletedAt: Date.now()
             } } };
             await this.remoteUnchanged(path, manifest);
-            await this.transaction.commit(path, next, deviceId);
+            await this.transaction.commit(path, next, deviceId, undefined, manifest.files[path]);
             manifest.files = next.files;
             this.state.removeFileState(path);
             await this.logger.addLog({ action: 'Delete Remote', file: path });

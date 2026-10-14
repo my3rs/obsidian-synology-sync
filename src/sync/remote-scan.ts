@@ -4,23 +4,28 @@ import { calculateSHA256 } from './utils';
 import { validPath } from './validation';
 import { t } from '../locales';
 import { listRemoteFiles } from './remote-access';
+import { assertActive } from './cancellation';
 
 /** A failed or malformed traversal never produces a partial authoritative result. */
-export async function scanRemote(client: SynologyClient, root: string, manifest: SyncManifest, deviceId: string): Promise<void> {
+export async function scanRemote(client: SynologyClient, root: string, manifest: SyncManifest, deviceId: string,
+    excluded: (path: string) => boolean = () => false, signal?: AbortSignal): Promise<void> {
     const queue = [root];
     const visited = new Set<string>();
     while (queue.length) {
+        assertActive(signal);
         const folder = queue.shift()!;
         if (visited.has(folder)) throw new Error(t('safety.invalidManifest'));
         visited.add(folder);
         const items = await listRemoteFiles(client, folder);
         for (const item of items) {
+            assertActive(signal);
             if (typeof item.name !== 'string' || item.name.includes('/') || item.name.includes('\\')) throw new Error(t('safety.invalidManifest'));
             if (item.name.startsWith('.')) continue;
             const remotePath = `${folder}/${item.name}`;
             const path = remotePath.slice(root.length + 1);
             if (!validPath(path)) throw new Error(t('safety.invalidManifest'));
-            if (item.type === 'dir' || item.isdir === true) { queue.push(remotePath); continue; }
+            if (excluded(path)) continue;
+            if (item.type === 'dir' || item.type === 'folder' || item.isdir === true) { queue.push(remotePath); continue; }
             // Existing tombstones remain authoritative, including after long offline periods.
             if (manifest.files[path]?.deleted) continue;
             const buffer = await client.downloadFile(remotePath);

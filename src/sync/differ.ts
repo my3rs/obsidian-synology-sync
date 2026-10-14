@@ -49,7 +49,9 @@ export function computeSyncPlan(
 
         // Boolean derived states
         const localChanged = localExists && snapshotExists && local.hash !== snapshot.localHash;
-        const remoteChanged = manifestExists && snapshotExists && manifest.rev !== snapshot.syncedRev;
+        // Revisions also advance when another device force-uploads identical bytes.
+        // Three-way conflict detection must compare contents with the synced base.
+        const remoteChanged = manifestExists && snapshotExists && manifest.hash !== snapshot.syncedHash;
 
         const localDeleted = !localExists && snapshotExists;
         const remoteDeleted = snapshotExists && manifest && manifest.deleted === true && manifest.rev > snapshot.syncedRev;
@@ -71,6 +73,21 @@ export function computeSyncPlan(
 
         if (localExists && snapshotExists && !manifest) {
             plan.uploads.add(path);
+            continue;
+        }
+
+        if (local && manifestExists && local.hash === manifest.hash) {
+            // Covers first encounters, matching concurrent edits, and metadata-only
+            // revisions without downloading or uploading identical bytes again.
+            if (!snapshot || snapshot.localMtime !== local.mtime || snapshot.localHash !== local.hash
+                || snapshot.syncedRev !== manifest.rev || snapshot.syncedHash !== manifest.hash) {
+                plan.snapshotUpdates.set(path, {
+                    localMtime: local.mtime,
+                    localHash: local.hash,
+                    syncedRev: manifest.rev,
+                    syncedHash: manifest.hash
+                });
+            }
             continue;
         }
 

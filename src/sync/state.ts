@@ -31,13 +31,26 @@ export class SyncState {
 
     async load() {
         this.data = this.empty();
-        if (!await this.app.vault.adapter.exists(this.path)) return;
-        const parsed: unknown = JSON.parse(await this.app.vault.adapter.read(this.path));
+        let failure: Error | undefined;
+        for (const path of [this.path, `${this.path}.bak`]) {
+            if (!await this.app.vault.adapter.exists(path)) continue;
+            try {
+                const parsed: unknown = JSON.parse(await this.app.vault.adapter.read(path));
+                this.data = this.parse(parsed) ?? this.data;
+                return;
+            } catch (error) { failure ??= error instanceof Error ? error : new Error(String(error)); }
+        }
+        // A truncated write may be recovered from the independently persisted copy.
+        // Invalid copies must never become a new empty authoritative snapshot.
+        if (failure) throw failure;
+    }
+
+    private parse(parsed: unknown): LocalSyncData | null {
         if (!record(parsed)) throw new Error(t('safety.invalidManifest'));
         // Legacy and foreign target snapshots cannot authorize a deletion.
-        if (parsed.schemaVersion === 1 || parsed.schemaVersion === undefined) return;
+        if (parsed.schemaVersion === 1 || parsed.schemaVersion === undefined) return null;
         if (parsed.schemaVersion !== 2) throw new Error(t('safety.invalidManifest'));
-        if (parsed.target !== this.target) return;
+        if (parsed.target !== this.target) return null;
         if (!record(parsed.files) || typeof parsed.deviceId !== 'string') throw new Error(t('safety.invalidManifest'));
         for (const [path, value] of Object.entries(parsed.files)) {
             if (!validPath(path) || !record(value) || !isHash(value.localHash) || !isHash(value.syncedHash)
@@ -46,12 +59,16 @@ export class SyncState {
                 throw new Error(t('safety.invalidManifest'));
             }
         }
-        this.data = parsed as unknown as LocalSyncData;
+        return parsed as unknown as LocalSyncData;
     }
 
     async save() {
         // Failure must reach the caller; it must never be reported as a successful sync.
-        await this.app.vault.adapter.write(this.path, JSON.stringify(this.data));
+        const serialized = JSON.stringify(this.data);
+        // Keep a second complete copy before replacing the primary. No assumption
+        // about an adapter's rename/overwrite atomicity is needed on mobile.
+        await this.app.vault.adapter.write(`${this.path}.bak`, serialized);
+        await this.app.vault.adapter.write(this.path, serialized);
     }
 
     getFileState(path: string): LocalFileEntry | undefined { return this.data.files[path]; }
