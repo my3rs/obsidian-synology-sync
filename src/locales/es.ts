@@ -60,6 +60,11 @@ export default {
 
 	'status.standby': 'Haz clic para sincronizar',
 	'status.standbyWithTime': 'Última sincronización: {{time}}',
+	'status.pending': '{{count}} elementos pendientes de sincronizar',
+	'status.checkPending': 'Esperando para comprobar actualizaciones',
+	'status.waitingNetwork': 'Esperando conexión ({{count}} pendientes)',
+	'status.waitingLock': 'Esperando a otro dispositivo ({{count}} pendientes)',
+	'notice.queueSaveFailed': 'No se pudieron guardar los cambios pendientes: {{error}}',
 	'status.syncing': 'NAS: Sincronizando...',
 	'status.error': 'NAS: Error',
 	'status.forceUploading': 'NAS: Forzando subida...',

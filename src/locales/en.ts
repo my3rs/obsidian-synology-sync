@@ -61,6 +61,11 @@ export default {
 	
 	'status.standby': 'Click to sync',
 	'status.standbyWithTime': 'Last synced: {{time}}',
+	'status.pending': '{{count}} items pending sync',
+	'status.checkPending': 'Waiting to check for updates',
+	'status.waitingNetwork': 'Waiting for network ({{count}} pending)',
+	'status.waitingLock': 'Waiting for another device ({{count}} pending)',
+	'notice.queueSaveFailed': 'Could not save pending sync changes: {{error}}',
 	'status.syncing': 'NAS: Syncing...',
 	'status.error': 'NAS: Error',
 	'status.forceUploading': 'NAS: Force Uploading...',

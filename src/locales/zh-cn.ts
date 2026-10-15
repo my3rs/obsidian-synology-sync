@@ -62,6 +62,11 @@ export default {
 	
 	'status.standby': '点击同步',
 	'status.standbyWithTime': '上次同步: {{time}}',
+	'status.pending': '有 {{count}} 项待同步',
+	'status.checkPending': '等待检查更新',
+	'status.waitingNetwork': '等待网络（{{count}} 项待同步）',
+	'status.waitingLock': '等待其他设备（{{count}} 项待同步）',
+	'notice.queueSaveFailed': '无法保存待同步记录：{{error}}',
 	'status.syncing': 'NAS: 同步中...',
 	'status.error': 'NAS: 错误',
 	'status.forceUploading': 'NAS: 强制上传中...',

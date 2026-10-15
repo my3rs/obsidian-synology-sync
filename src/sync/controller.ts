@@ -7,12 +7,14 @@ import { syncTarget } from './remote-access';
 import { isSyncablePath, isSyncWrite } from '../fs/local';
 import { t } from '../locales';
 import { SyncLockedError } from './manifest';
+import { SyncQueue } from './queue';
 
-export type SyncUIState = 'idle' | 'syncing' | 'force-uploading' | 'force-downloading' | 'rebuilding' | 'error';
+export type SyncUIState = 'idle' | 'pending' | 'waiting-network' | 'waiting-lock' | 'syncing' | 'force-uploading' | 'force-downloading' | 'rebuilding' | 'error';
 
 /** Serialize all entry points and retain user changes that arrive during a sync. */
 export class SyncController {
     deletions = new DeletionTracker();
+    private queue = new SyncQueue();
     private target = '';
     private credentials = '';
     private session = '';
@@ -24,6 +26,8 @@ export class SyncController {
     private pendingFull = false;
     private notice: Notice | null = null;
     private noticeTimeout: number | null = null;
+    private offline = false;
+    private lockRetries = 0;
 
     constructor(private plugin: SynologySyncPlugin) {}
 
@@ -40,6 +44,26 @@ export class SyncController {
         void this.runSync(true);
     }
 
+    /** Browser connectivity is only a hint; manual sync can still try the NAS. */
+    resume(online = true): void {
+        if (this.unloaded) return;
+        this.offline = !online;
+        if (!this.ready) return;
+        if (this.offline) { this.networkOffline(); return; }
+        void this.runSync(false);
+    }
+
+    networkOffline(): void {
+        if (this.unloaded) return;
+        this.offline = true;
+        this.clearTimer();
+        if (this.ready && !this.active) this.showStatus('waiting-network');
+    }
+
+    get pendingCount(): number {
+        return new Set([...this.queue.snapshot().keys(), ...this.deletions.pending]).size;
+    }
+
     settingsChanged(): void {
         const settings = this.plugin.settings;
         const credentials = this.credentialKey(settings);
@@ -54,11 +78,13 @@ export class SyncController {
             this.clearTimer();
             this.pending = false;
             this.pendingFull = false;
+            this.lockRetries = 0;
             if (target !== this.target) {
                 settings.lastSyncTime = undefined;
                 this.resetTarget();
             }
             this.session = settings.sid;
+            if (this.ready && !this.active) this.showRestingStatus();
         }
     }
 
@@ -66,29 +92,43 @@ export class SyncController {
         if (!this.ready || this.unloaded) return;
         const removed = deletedPath && isSyncablePath(this.plugin.app, deletedPath) && !isSyncWrite(this.plugin.app, deletedPath);
         const changed = file && isSyncablePath(this.plugin.app, file.path) && !isSyncWrite(this.plugin.app, file.path);
-        if (removed) {
-            this.deletions.deleted(deletedPath);
-        }
         if (!removed && !changed) return;
-        if (changed) {
-            // A rename creates a new observed path (or an entire subtree); a delete does not.
-            this.deletions.observe(this.plugin.app.vault.getFiles().map(value => value.path)
-                .filter(path => path === file.path || path.startsWith(file.path + '/')));
-        }
         this.pending = true;
+        try {
+            if (removed) this.deletions.deleted(deletedPath);
+            const paths = new Set<string>();
+            if (removed) {
+                paths.add(deletedPath);
+                for (const path of this.deletions.pending) paths.add(path);
+            }
+            if (changed) {
+                // Observe only real files: a folder itself must never authorize deletion.
+                const descendants = this.plugin.app.vault.getFiles().map(value => value.path)
+                    .filter(path => (path === file.path || path.startsWith(file.path + '/')) && isSyncablePath(this.plugin.app, path));
+                this.deletions.observe(descendants);
+                paths.add(file.path);
+                for (const path of descendants) paths.add(path);
+            }
+            this.queue.mark(paths);
+        } catch (error) {
+            this.showStatus('error');
+            new Notice(t('notice.queueSaveFailed', { error: error instanceof Error ? error.message : String(error) }));
+            if (!this.active) this.schedule();
+            return;
+        }
+        if (!this.active) this.showRestingStatus();
         if (!this.active) this.schedule();
     }
 
     async runSync(fullScan: boolean, showNotice = false): Promise<void> {
         if (this.active) {
-            if (showNotice) {
-                this.pending = true;
-                this.pendingFull ||= fullScan;
-                new Notice(t('notice.engine.syncing'));
-            }
+            this.pending = true;
+            this.pendingFull ||= fullScan;
+            if (showNotice) new Notice(t('notice.engine.syncing'));
             return;
         }
-        await this.run('syncing', engine => engine.runSync(fullScan), showNotice);
+        const full = fullScan || this.pendingFull;
+        await this.run('syncing', engine => engine.runSync(full), showNotice, undefined, undefined, { fullScan: full, acknowledge: true });
     }
 
     async forceUpload(): Promise<void> {
@@ -100,20 +140,20 @@ export class SyncController {
     }
 
     async rebuild(): Promise<void> {
-        await this.run('rebuilding', engine => engine.rebuildSyncState(), true, 'notice.rebuildSuccess', 'notice.rebuildFailed');
+        await this.run('rebuilding', engine => engine.rebuildSyncState(), true, 'notice.rebuildSuccess', 'notice.rebuildFailed', { acknowledge: true });
     }
 
     async recoverLock(): Promise<void> {
         await this.run('rebuilding', async engine => {
             await engine.recoverLock();
             return engine.runSync(true);
-        }, true, 'notice.recoverLockSuccess', 'notice.recoverLockFailed');
+        }, true, 'notice.recoverLockSuccess', 'notice.recoverLockFailed', { acknowledge: true });
     }
 
     async transferActiveFile(direction: 'upload' | 'download'): Promise<void> {
         const file = this.plugin.app.workspace.getActiveFile();
         if (!file) { new Notice(t('notice.noActiveFile')); return; }
-        await this.run('syncing', engine => engine.syncFile(file.path, direction), true);
+        await this.run('syncing', engine => engine.syncFile(file.path, direction), true, undefined, undefined, { onlyPath: file.path, acknowledge: direction === 'upload' });
     }
 
     dispose(): void {
@@ -126,17 +166,26 @@ export class SyncController {
 
     private async run(state: SyncUIState, operation: (engine: SyncEngine) => Promise<boolean>, showNotice: boolean,
         successKey: Parameters<typeof t>[0] = 'notice.engine.syncSuccess',
-        failureKey: Parameters<typeof t>[0] = 'notice.syncException'): Promise<void> {
+        failureKey: Parameters<typeof t>[0] = 'notice.syncException',
+        options: { onlyPath?: string; fullScan?: boolean; acknowledge?: boolean } = {}): Promise<void> {
+        const fullScan = options.fullScan ?? true;
         if (!this.ready || this.unloaded) return;
         if (this.active) { if (showNotice) new Notice(t('notice.engine.syncing')); return; }
         if (!this.configured()) { if (showNotice) new Notice(t('notice.nasParamsMissing')); return; }
+        if (this.offline && !showNotice) {
+            this.pendingFull ||= fullScan;
+            this.showStatus('waiting-network');
+            return;
+        }
         const controller = new AbortController();
+        const queue = this.queue;
+        const batch = new Map([...queue.snapshot()].filter(([path]) => options.acknowledge && (!options.onlyPath || path === options.onlyPath)));
         this.active = controller;
         this.pending = false;
         this.pendingFull = false;
         this.clearTimer();
         this.hideNotice();
-        this.plugin.updateStatusBar(state);
+        this.showStatus(state);
         if (showNotice) this.notice = new Notice(t('notice.engine.syncing'), 0);
         try {
             const engine = await this.plugin.getEngine(controller.signal);
@@ -147,18 +196,26 @@ export class SyncController {
             this.plugin.settings.lastSyncTime = Date.now();
             await this.plugin.saveSettings();
             if (controller.signal.aborted) return;
-            this.plugin.updateStatusBar('idle');
-            this.notice?.setMessage(t(changed || successKey !== 'notice.engine.syncSuccess' ? successKey : 'notice.engine.syncUpToDate'));
+            queue.complete(batch);
+            this.lockRetries = 0;
+            this.showRestingStatus();
+            this.notice?.setMessage(this.pendingCount || this.pending
+                ? this.pendingCount ? t('status.pending', { count: String(this.pendingCount) }) : t('status.checkPending')
+                : t(changed || successKey !== 'notice.engine.syncSuccess' ? successKey : 'notice.engine.syncUpToDate'));
             if (this.notice) this.noticeTimeout = window.setTimeout(() => this.hideNotice(), 3000);
             this.plugin.app.workspace.trigger('synology-sync:sync-completed');
         } catch (error) {
             if (!controller.signal.aborted) {
-                if (error instanceof SyncLockedError && !showNotice) {
-                    this.plugin.updateStatusBar('idle');
+                this.pendingFull ||= fullScan;
+                if (error instanceof SyncLockedError) {
+                    this.pending = true;
+                    this.lockRetries++;
+                    this.showStatus('waiting-lock');
+                    this.hideNotice();
                     return;
                 }
                 console.error('[SynologySync] Sync error', error);
-                this.plugin.updateStatusBar('error');
+                this.showStatus('error');
                 this.hideNotice();
                 new Notice(t(failureKey, { error: error instanceof Error ? error.message : String(error) }));
             }
@@ -166,19 +223,19 @@ export class SyncController {
             this.active = null;
             if (controller.signal.aborted) {
                 this.hideNotice();
-                if (!this.unloaded) this.plugin.updateStatusBar('idle');
+                if (!this.unloaded) this.showRestingStatus();
             }
-            if (this.pending && !this.unloaded) this.schedule();
+            if (this.pending && !this.unloaded) this.schedule(Math.min(3000 * 2 ** Math.min(this.lockRetries, 4), 30000));
         }
     }
 
-    private schedule(): void {
+    private schedule(delay = 3000): void {
         this.clearTimer();
-        if (!this.configured()) return;
+        if (!this.configured() || this.offline || this.unloaded) return;
         this.timeout = window.setTimeout(() => {
             this.timeout = null;
             void this.runSync(this.pendingFull);
-        }, 3000);
+        }, delay);
     }
 
     private configured(): boolean {
@@ -190,6 +247,7 @@ export class SyncController {
         const { nasUrl, username, syncFolder } = this.plugin.settings;
         this.target = syncTarget(nasUrl, username, syncFolder);
         this.deletions = new DeletionTracker(this.plugin.app, this.target);
+        this.queue = new SyncQueue(this.plugin.app, this.target);
         if (this.ready) this.observeFiles();
     }
 
@@ -199,6 +257,14 @@ export class SyncController {
 
     private credentialKey(settings: SynologySyncSettings): string {
         return JSON.stringify([settings.nasUrl, settings.username, settings.password]);
+    }
+
+    private showStatus(state: SyncUIState): void {
+        this.plugin.updateStatusBar(state, this.pendingCount);
+    }
+
+    private showRestingStatus(): void {
+        this.showStatus(this.offline ? 'waiting-network' : this.pendingCount || this.pending ? 'pending' : 'idle');
     }
 
     private clearTimer(): void {

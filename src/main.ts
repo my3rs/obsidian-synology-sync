@@ -1,4 +1,4 @@
-import { Plugin, setIcon, setTooltip, TAbstractFile, TFile } from 'obsidian';
+import { Plugin, TAbstractFile, TFile } from 'obsidian';
 import {
 	DEFAULT_SETTINGS,
 	SynologySyncSettings,
@@ -8,6 +8,8 @@ import { t } from './locales';
 import { SyncController, SyncUIState } from './sync/controller';
 import { ConfirmModal } from './ui/confirm-modal';
 import { syncTarget } from './sync/remote-access';
+import { registerSyncTriggers } from './sync/triggers';
+import { renderSyncStatus } from './ui/status-bar';
 
 
 import type { SyncLogger } from './sync/logger';
@@ -17,47 +19,8 @@ export default class SynologySyncPlugin extends Plugin {
 	settings!: SynologySyncSettings;
 	public logger!: SyncLogger;
 	private statusBarItem!: HTMLElement;
-	updateStatusBar(state: SyncUIState) {
-		if (!this.statusBarItem) return;
-		this.statusBarItem.empty();
-		let iconName = 'cloud';
-		let tooltipText = '';
-
-		switch (state) {
-			case 'idle':
-				iconName = this.settings.lastSyncTime ? 'check-circle' : 'cloud';
-				if (this.settings.lastSyncTime) {
-					const date = new Date(this.settings.lastSyncTime);
-					const timeStr = date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0');
-					tooltipText = t('status.standbyWithTime', { time: timeStr });
-				} else {
-					tooltipText = t('status.standby');
-				}
-				break;
-			case 'syncing':
-				iconName = 'refresh-cw';
-				tooltipText = t('status.syncing');
-				break;
-			case 'force-uploading':
-				iconName = 'upload-cloud';
-				tooltipText = t('status.forceUploading');
-				break;
-			case 'force-downloading':
-				iconName = 'download-cloud';
-				tooltipText = t('status.forceDownloading');
-				break;
-			case 'rebuilding':
-				iconName = 'database';
-				tooltipText = t('status.rebuilding');
-				break;
-			case 'error':
-				iconName = 'alert-triangle';
-				tooltipText = t('status.error');
-				break;
-		}
-
-		setIcon(this.statusBarItem, iconName);
-		setTooltip(this.statusBarItem, tooltipText, { placement: 'top' });
+	updateStatusBar(state: SyncUIState, count = 0) {
+		if (this.statusBarItem) renderSyncStatus(this.statusBarItem, state, this.settings.lastSyncTime, count);
 	}
 
 	async onload() {
@@ -157,6 +120,8 @@ export default class SynologySyncPlugin extends Plugin {
 		this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
 			this.controller.fileChanged(file, oldPath);
 		}));
+
+		registerSyncTriggers(this, this.controller);
 
 		// 定时轮询远端变更 (每 30 秒一次 Quick Sync)
 		this.registerInterval(
